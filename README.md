@@ -1,4 +1,4 @@
-# hermes-bonsai-combo
+# nuncstans-hermes-stack
 
 A recipe for running NousResearch's **Hermes Agent** fully locally.
 
@@ -12,7 +12,7 @@ Target host: **WSL2 Ubuntu**. It is possible to run directly on Windows, but the
 
 ### Repository structure
 
-hermes-stack is a thin outer repo that pins three git submodules — all the actual code lives in the linked repos, hermes-stack only tracks which commit of each to build against:
+nuncstans-hermes-stack is a thin outer repo that pins three git submodules — all the actual code lives in the linked repos, nuncstans-hermes-stack only tracks which commit of each to build against:
 
 | Submodule | URL | Branch | Notes |
 |---|---|---|---|
@@ -23,24 +23,24 @@ hermes-stack is a thin outer repo that pins three git submodules — all the act
 **Clone with submodules:**
 
 ```bash
-git clone --recursive https://github.com/baba-yu/nuncstans-hermes-stack.git hermes-stack
+git clone --recursive https://github.com/baba-yu/nuncstans-hermes-stack.git
 # — or, if you already cloned without --recursive —
-cd hermes-stack && git submodule update --init --recursive
+cd nuncstans-hermes-stack && git submodule update --init --recursive
 ```
 
 **Update submodules later:**
 
 ```bash
-# Re-pin to the commits hermes-stack currently tracks (after `git pull`)
+# Re-pin to the commits nuncstans-hermes-stack currently tracks (after `git pull`)
 git submodule update --init --recursive
 
-# Pull the tip of each submodule's tracked branch and bump hermes-stack's pointer
+# Pull the tip of each submodule's tracked branch and bump nuncstans-hermes-stack's pointer
 git submodule update --remote
 git add honcho bonsai-llama.cpp honcho-self-hosted
 git commit -m "Bump submodules"
 ```
 
-Note: the local modifications you make inside `honcho/` (e.g. editing `config.toml`, which upstream `.gitignore`s) stay local to that submodule's working tree and are not tracked by hermes-stack. Commits inside `honcho/` go to the `baba-yu/nuncstans-honcho` fork; hermes-stack only records which honcho commit to use.
+Note: the local modifications you make inside `honcho/` (e.g. editing `config.toml`, which upstream `.gitignore`s) stay local to that submodule's working tree and are not tracked by nuncstans-hermes-stack. Commits inside `honcho/` go to the `baba-yu/nuncstans-honcho` fork; nuncstans-hermes-stack only records which honcho commit to use.
 
 ### Process layout
 
@@ -141,10 +141,10 @@ source ~/.bashrc
 nvcc --version   # should print "release 12.9"
 ```
 
-Everything below runs inside **WSL2 Ubuntu**. The working directory is `$HOME/hermes-stack`.
+Everything below runs inside **WSL2 Ubuntu**. The working directory is `$HOME/nuncstans-hermes-stack`.
 
 ```bash
-mkdir -p "$HOME/hermes-stack" && cd "$HOME/hermes-stack"
+mkdir -p "$HOME/nuncstans-hermes-stack" && cd "$HOME/nuncstans-hermes-stack"
 ```
 
 > **Two stacks, pick one.** This section sets up the default **gatekeeper stack** (under `honcho/`) which includes the local modifications described throughout this README (classifier, peer filter, supersede, etc.). An alternative **upstream stack** shipped under `honcho-self-hosted/` runs vanilla `plastic-labs/honcho` against the same Bonsai + Ollama backends. See [Switching between the gatekeeper stack and upstream Honcho](#switching-between-the-gatekeeper-stack-and-upstream-honcho) further down for the switching procedure.
@@ -173,13 +173,13 @@ These four knobs are the difference between a stack that **remembers your conver
 - You *can* raise this once you have GPU headroom, but never without budgeting `parallel × n_ctx` worth of KV.
 - Symptoms when this is wrong: `/slots` on Bonsai returns truncated/empty JSON, `tail bonsai.log` shows `failed to find free space`, and `docker compose logs deriver` is silent for 10+ minutes.
 
-#### 3. `[app] MAX_EMBEDDING_TOKENS`  (scaffold 8192 → **set to 2048**)
+#### 3. `[embedding] MAX_INPUT_TOKENS`  (scaffold 8192 → **set to 2048**)
 
-Must match the embedding model's native context. `nomic-embed-text` is 2048. If this exceeds the model's context, any single message longer than the model's limit gets sent as one oversized chunk and Ollama returns `400 - the input length exceeds the context length`. Honcho's chunker respects this value and splits accordingly — set it correctly and long messages just get chunked transparently.
+Must match the embedding model's native context. `nomic-embed-text` is 2048. If this exceeds the model's context, any single message longer than the model's limit gets sent as one oversized chunk and Ollama returns `400 - the input length exceeds the context length`. Honcho's chunker respects this value and splits accordingly — set it correctly and long messages just get chunked transparently. (Pre-refactor this knob lived at `[app] MAX_EMBEDDING_TOKENS`; upstream moved it under `[embedding]` when `EmbeddingSettings` was split out of `LLMSettings`. The old key is silently ignored by the new code.)
 
-#### 4. `Vector(N)` in the pgvector schema + `[vector_store] DIMENSIONS`  (scaffold 1536 → **set to 768**)
+#### 4. `Vector(N)` in the pgvector schema + `[vector_store] DIMENSIONS` + `MIGRATED`  (upstream 1536 → **fork flips to 768 via migration**)
 
-The `DIMENSIONS` key in `config.toml` only affects LanceDB. For pgvector (the default) the column width is hardcoded to `Vector(1536)` in three migration files and in `src/models.py`. If your embedding model produces 768-dim vectors, you **must** also sed those files to `Vector(768)` or every insert rolls back with `expected 1536 dimensions, not 768`. Step 3 below does the sed for you.
+The `DIMENSIONS` key in `config.toml` only affects LanceDB. For pgvector (the default) the column width is hardcoded to `Vector(1536)` in upstream's initial schema and migrations — matching OpenAI's `text-embedding-3-small`. If your embedding model produces 768-dim vectors, every insert would roll back with `expected 1536 dimensions, not 768`. The fork ships an `h8i9j0k1l2m3` migration that alters `documents.embedding` and `message_embeddings.embedding` to `Vector(768)` after upstream's schema lands; `[vector_store] MIGRATED = true` tells `src/config.py`'s relaxed validator to accept non-1536 dims once that migration has run. Both are already set in `config.toml.bonsai-example`, nothing to sed by hand.
 
 #### 5. `scripts/sleep_daemon.py` thresholds (`PENDING_THRESHOLD` / `TOKEN_THRESHOLD` / `IDLE_TIMEOUT_MINUTES`)
 
@@ -193,28 +193,26 @@ These are the three knobs you will actually want to tune — different users hav
 
 ```bash
 PENDING_THRESHOLD=5 TOKEN_THRESHOLD=500 IDLE_TIMEOUT_MINUTES=5 \
-  python3 ~/hermes-stack/scripts/sleep_daemon.py
+  python3 ~/nuncstans-hermes-stack/scripts/sleep_daemon.py
 ```
 
 #### Other values worth watching (less critical)
 
-- `[deriver] MAX_OUTPUT_TOKENS` (scaffold 4096 → **1500**): tool loops accumulate output; with 4096 the prompt grows fast enough to blow past Bonsai's 16k context in 2 iterations. On GPU you can try the scaffold default (4096) again — a single iteration completes in ~0.5 s — but 1500 is still the safer bound.
+- `[deriver.model_config] max_output_tokens` (scaffold 4096 → **1500**): tool loops accumulate output; with 4096 the prompt grows fast enough to blow past Bonsai's 16k context in 2 iterations. On GPU you can try the scaffold default (4096) again — a single iteration completes in ~0.5 s — but 1500 is still the safer bound. (Post-refactor this lives inside the nested `[X.model_config]` block, not on the flat `[deriver]` table.)
 - `[deriver] MAX_INPUT_TOKENS` (scaffold 23000 → **8000**): Bonsai's 16k context can't accept 23k; you'd get a 400 from llama.cpp on the first turn.
 - `llama-server -c` (scaffold 8192 → **16384**): give the deriver tool-call loop headroom. Bonsai-8B was trained with a 65k context, so 16k is safe.
 - `[dream] MAX_TOOL_ITERATIONS` (scaffold 20 → **3**): on GPU a 22-iteration dream finishes in ~14 s (see `benchmark.md`), so the scaffold default is fine if you want deeper consolidation. 3 keeps it faster still.
 - `[dream] MIN_HOURS_BETWEEN_DREAMS` (scaffold 8 → **1**): Honcho validates this as an integer, so fractional hours (0.5) are rejected. 1 hour is the shortest legal value.
-- `BACKUP_PROVIDER` / `BACKUP_MODEL` (strip all lines): the scaffold's backup provider points at Ollama for embeddings, which does not serve `bonsai-8b`. Leaving the lines in means retry failures turn into `NotFoundError`s.
+- Fallback model (**leave unset**): the new `ConfiguredModelSettings` schema supports a nested `fallback = { transport, model, overrides }` on each `[X.model_config]` block. In this local-only setup there's no second provider to fall back to — don't add one, or retries after a transient Bonsai error will silently bounce to an unrelated endpoint. This replaces the old `BACKUP_PROVIDER` / `BACKUP_MODEL` flat keys, which no longer exist.
 
 All of the above are applied as part of Step 3. If memory ever stops working, re-read this section first. `benchmark.md` has the raw numbers that back these recommendations.
 
 ### Step 1. Build Bonsai and start `llama-server`
 
-Clone the PrismML fork of `llama.cpp` and build **with CUDA on** (this recipe assumes an NVIDIA GPU; see `experiments/maintainer-notes.md` if you don't have one — on CPU Bonsai is too slow for the Honcho workloads here and you should pick a different memory model instead).
+The PrismML fork of `llama.cpp` is already checked out at `bonsai-llama.cpp/` by the recursive submodule clone, so there's nothing to `git clone` here. Build it **with CUDA on** (this recipe assumes an NVIDIA GPU; see `experiments/maintainer-notes.md` if you don't have one — on CPU Bonsai is too slow for the Honcho workloads here and you should pick a different memory model instead).
 
 ```bash
-cd "$HOME/hermes-stack"
-git clone --depth 1 https://github.com/PrismML-Eng/llama.cpp bonsai-llama.cpp
-cd bonsai-llama.cpp
+cd "$HOME/nuncstans-hermes-stack/bonsai-llama.cpp"
 export PATH=/usr/local/cuda/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 cmake -B build -DGGML_CUDA=ON
@@ -223,10 +221,10 @@ cmake --build build -j --config Release --target llama-server
 
 The CUDA build takes 5–10 minutes on a typical dev box; the heavy part is `ggml-cuda`'s CUDA kernels (there are many template instantiations per quantization type). The Blackwell `120a-real` architecture is added automatically by the fork's CMake when CUDA ≥ 12.8 is detected.
 
-Download the GGUF (`Bonsai-8B.gguf`, ~1.1GB):
+The cmake output above is just the **`llama-server` executable** — the inference engine. It still needs a model file to serve. Download the Bonsai GGUF (`Bonsai-8B.gguf`, ~1.1GB) into a separate `models/` directory (not a submodule, so it has to be fetched explicitly):
 
 ```bash
-cd "$HOME/hermes-stack"
+cd "$HOME/nuncstans-hermes-stack"
 mkdir -p models && cd models
 curl -L -o Bonsai-8B.gguf \
   https://huggingface.co/prism-ml/Bonsai-8B-gguf/resolve/main/Bonsai-8B.gguf
@@ -235,16 +233,16 @@ curl -L -o Bonsai-8B.gguf \
 Start `llama-server` in OpenAI-compatible mode. `-ngl 99` offloads all layers to the GPU; `--alias bonsai-8b` fixes the logical name Honcho will reference. Use `-c 16384` — Honcho's deriver iterates tool calls (each round appends the model's output + tool result to the prompt) and a single representation task can accumulate 10–12k tokens before it finishes; the scaffold's 8192 context is not enough. Bonsai-8B was trained with a 65k context, so 16k is well within the model's native range.
 
 ```bash
-cd "$HOME/hermes-stack/bonsai-llama.cpp"
+cd "$HOME/nuncstans-hermes-stack/bonsai-llama.cpp"
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 ./build/bin/llama-server \
-  -m "$HOME/hermes-stack/models/Bonsai-8B.gguf" \
+  -m "$HOME/nuncstans-hermes-stack/models/Bonsai-8B.gguf" \
   --host 0.0.0.0 --port 8080 \
   -ngl 99 \
   -c 16384 \
   --parallel 1 \
   --alias bonsai-8b \
-  > "$HOME/hermes-stack/bonsai.log" 2>&1 &
+  > "$HOME/nuncstans-hermes-stack/bonsai.log" 2>&1 &
 ```
 
 `-ngl 99` puts the whole model + KV cache on the GPU. On an RTX 5080 (16 GiB) Bonsai uses ~1.1 GiB for weights + ~6.5 GiB for the 16k KV cache = ~7.6 GiB VRAM. That still leaves room for the chat model Ollama serves (e.g. `qwen3.5:9b` at ~8.6 GiB) — total ~15.4 GiB with a small margin. If you swap the chat model for something larger that exceeds the remaining budget, Ollama offloads automatically but you may want to drop `-c` from 16384 to 8192 to free ~3 GiB of Bonsai KV.
@@ -294,37 +292,35 @@ curl -s http://localhost:11434/api/tags | head
 
 ### Step 3. Bring up Honcho and point it at Bonsai / Ollama
 
-The honcho source is already populated — `honcho/` is a git submodule pinned to `baba-yu/nuncstans-honcho` (branch `dev`), so `git clone --recursive <hermes-stack>` (or `git submodule update --init --recursive` after a non-recursive clone) already has the tree in place. No manual `git clone` is needed here.
+The honcho source is already populated — `honcho/` is a git submodule pinned to `baba-yu/nuncstans-honcho` (branch `dev`), so `git clone --recursive <nuncstans-hermes-stack>` (or `git submodule update --init --recursive` after a non-recursive clone) already has the tree in place. No manual `git clone` is needed here.
 
 Upstream `.gitignore`s the live `config.toml`, so the submodule ships a committed `config.toml.bonsai-example` with all the knobs below already set. The one manual step is to materialize it as the live file the container reads:
 
 ```bash
-cd "$HOME/hermes-stack"
+cd "$HOME/nuncstans-hermes-stack"
 cp honcho/config.toml.bonsai-example honcho/config.toml
 ```
 
-Populate `honcho/.env` with the LLM-routing environment variables. Honcho's `src/embedding_client.py` does not read the `LLM_EMBEDDING_*` variables documented in the upstream `config.toml` comment — those fields are not defined on `LLMSettings` and are silently ignored. Only the `openrouter` branch of the client honours a custom base URL, via `LLM_OPENAI_COMPATIBLE_API_KEY` + `LLM_OPENAI_COMPATIBLE_BASE_URL` (the `LLM_` prefix is mandatory — `LLMSettings` uses `env_prefix="LLM_"`). The shipped `config.toml.bonsai-example` already has `EMBEDDING_PROVIDER = "openrouter"` so the local Ollama endpoint is actually used for embeddings.
+Upstream refactored honcho's config schema: embedding settings moved out of `LLMSettings` into a dedicated `EmbeddingSettings` class, and every LLM consumer (deriver / each dialectic level / summary / dream's deduction + induction specialists) gets its own nested `[X.model_config]` block with `transport` / `model` / `overrides.base_url`. The tracked `config.toml.bonsai-example` is already in that shape — every endpoint is pinned in TOML — so `honcho/.env` is mostly optional. The OpenAI transport refuses to initialize with an empty `api_key` though, and the committed TOML sets `[llm] OPENAI_API_KEY = "not-needed"`; mirroring that in `.env` is belt-and-suspenders in case a stray env override clobbers it:
 
 ```dotenv
-# Honcho's LLM calls go to local Bonsai
-LLM_VLLM_API_KEY=not-needed
-LLM_VLLM_BASE_URL=http://host.docker.internal:8080/v1
-
-# Client init formalities (values irrelevant but must be present)
+# Placeholder — llama-server and Ollama both ignore the value but refuse
+# empty strings. Already set to "not-needed" in config.toml; this only
+# matters if you strip the TOML line.
 LLM_OPENAI_API_KEY=not-needed
+```
 
-# Embedding route: OpenAI SDK -> Ollama (goes through the "openrouter"
-# branch of embedding_client.py, which is the only one that honours a
-# custom base URL). The model name is hardcoded to
-# "openai/text-embedding-3-small", hence the `ollama cp` alias in Step 2.
-LLM_OPENAI_COMPATIBLE_API_KEY=ollama
-LLM_OPENAI_COMPATIBLE_BASE_URL=http://host.docker.internal:11434/v1
+If you want to override an endpoint without editing committed TOML, pydantic-settings reads nested fields via a `__` delimiter (each settings class uses `env_prefix="<NAME>_"` + `env_nested_delimiter="__"`). Example overrides:
+
+```dotenv
+EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://host.docker.internal:11434/v1
+DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=http://host.docker.internal:8080/v1
 ```
 
 Bring the stack up:
 
 ```bash
-cd "$HOME/hermes-stack/honcho"
+cd "$HOME/nuncstans-hermes-stack/honcho"
 docker compose up -d
 docker compose ps
 curl -s http://localhost:8000/health
@@ -333,77 +329,69 @@ curl -s http://localhost:8000/openapi.json | head -c 200; echo
 
 The submodule ships its own `docker-compose.override.yml` that adds `host.docker.internal:host-gateway` to the `api` and `deriver` services (on native Linux Docker Engine that alias does not resolve out of the box), and resets `ports: []` on `database` and `redis` so the published 5432 / 6379 ports don't collide if the host already runs Postgres or Redis. No manual override editing is required.
 
-Confirm the container actually sees the local-Ollama endpoint (if this prints an empty string, the `LLM_` prefix is wrong or the `.env` wasn't picked up):
+Confirm the container sees the committed endpoints (if any of these print `None`, the TOML wasn't loaded):
 
 ```bash
 docker compose exec api python3 -c "from src.config import settings; \
-  print('EMBEDDING_PROVIDER =', repr(settings.LLM.EMBEDDING_PROVIDER)); \
-  print('OPENAI_COMPATIBLE_BASE_URL =', repr(settings.LLM.OPENAI_COMPATIBLE_BASE_URL))"
-# EMBEDDING_PROVIDER = 'openrouter'
-# OPENAI_COMPATIBLE_BASE_URL = 'http://host.docker.internal:11434/v1'
+  mc = settings.EMBEDDING.MODEL_CONFIG; \
+  print('transport =', mc.transport); \
+  print('model    =', mc.model); \
+  print('base_url =', mc.overrides.base_url)"
+# transport = openai
+# model    = openai/text-embedding-3-small
+# base_url = http://host.docker.internal:11434/v1
 ```
 
 #### What's in `config.toml.bonsai-example` and why
 
 The committed example already applies the "Critical hyperparameters" callouts above. This subsection documents what each block is and why it's set that way — so when you later decide to tune something, you know which values are load-bearing and which are preference.
 
-Every LLM slot names our Bonsai alias, `MAX_EMBEDDING_TOKENS` is capped at nomic's 2048-token native context (otherwise messages longer than 2048 tokens get sent as a single oversized chunk and Ollama rejects them with `400 — the input length exceeds the context length`), the deriver output + input budget is shrunk so tool iterations stay inside Bonsai's 16k context, and the 768-dim vector store is advertised. Every `BACKUP_PROVIDER` / `BACKUP_MODEL` line is stripped — in this local-only setup the backup slot ("custom") is wired to Ollama for embeddings, so on primary retry the deriver would ask Ollama for `bonsai-8b` and get 404. One provider, no fallback chain:
+Every LLM consumer (deriver, each dialectic level, summary, dream's deduction + induction specialists) carries its own `[X.model_config]` block naming the Bonsai alias via `transport = "openai"` + `model = "bonsai-8b"` + `overrides.base_url = "http://host.docker.internal:8080/v1"`. Embeddings have their own `[embedding.model_config]` pointed at Ollama. `[embedding] VECTOR_DIMENSIONS = 768` matches nomic-embed-text's output, `[embedding] MAX_INPUT_TOKENS = 2048` matches its native context so the chunker splits longer messages before they reach Ollama, and the deriver's output + input budget is shrunk so tool iterations stay inside Bonsai's 16k window. None of the `model_config` blocks define a nested `fallback` — this is a local-only setup with no second provider to bounce to:
 
 ```toml
+[embedding]
+VECTOR_DIMENSIONS = 768
+MAX_INPUT_TOKENS  = 2048        # nomic-embed-text's native context
+
+[embedding.model_config]
+transport = "openai"
+model     = "openai/text-embedding-3-small"   # Ollama alias created in Step 2
+
+[embedding.model_config.overrides]
+base_url = "http://host.docker.internal:11434/v1"
+
 [deriver]
-PROVIDER = "vllm"
-MODEL = "bonsai-8b"
-MAX_OUTPUT_TOKENS = 1500              # scaffold ships 4096, which is too hot for Bonsai's 16k ctx under tool loops
-MAX_INPUT_TOKENS  = 8000              # scaffold ships 23000 — nothing we run here can accept that much
-REPRESENTATION_BATCH_MAX_TOKENS = 200 # scaffold ships 1024; casual chat never reaches that so nothing ever gets derived
+MAX_INPUT_TOKENS                 = 8000   # scaffold ships 23000 — way over Bonsai's window
+REPRESENTATION_BATCH_MAX_TOKENS  = 200    # scaffold ships 1024; casual chat never reaches that
+FLUSH_ENABLED                    = true
 
-[dialectic.levels.minimal]
-PROVIDER = "vllm"
-MODEL = "bonsai-8b"
-[dialectic.levels.low]
-PROVIDER = "vllm"
-MODEL = "bonsai-8b"
-[dialectic.levels.medium]
-PROVIDER = "vllm"
-MODEL = "bonsai-8b"
-[dialectic.levels.high]
-PROVIDER = "vllm"
-MODEL = "bonsai-8b"
-[dialectic.levels.max]
-PROVIDER = "vllm"
-MODEL = "bonsai-8b"
+[deriver.model_config]
+transport         = "openai"
+model             = "bonsai-8b"
+max_output_tokens = 1500                   # scaffold ships 4096, too hot for Bonsai under tool loops
 
-[summary]
-PROVIDER = "vllm"
-MODEL = "bonsai-8b"
+[deriver.model_config.overrides]
+base_url = "http://host.docker.internal:8080/v1"
 
-[dream]
-PROVIDER = "vllm"
-MODEL = "bonsai-8b"
-DEDUCTION_MODEL = "bonsai-8b"
-INDUCTION_MODEL = "bonsai-8b"
+# Repeat for [dialectic.levels.{minimal,low,medium,high,max}.model_config]
+# plus [summary.model_config], [dream.deduction_model_config], [dream.induction_model_config]
+# — each with transport="openai" / model="bonsai-8b" / overrides.base_url = ":8080/v1".
 
 [vector_store]
-TYPE = "pgvector"
+TYPE       = "pgvector"
 DIMENSIONS = 768
-
-[app]
-MAX_EMBEDDING_TOKENS = 2048   # nomic-embed-text's native context
+MIGRATED   = true    # relaxed-validator flag; accepts non-1536 once the h8i9j0k1l2m3 migration has flipped the column widths
 ```
 
-If you ever need to regenerate `config.toml` from scratch without the `.bonsai-example` template, the drop-the-backup step is:
+If you ever regenerate `config.toml` from scratch without the `.bonsai-example` template, there is no `BACKUP_PROVIDER` / `BACKUP_MODEL` strip step — those flat keys don't exist in the new schema. Fallback is an optional nested `fallback = { transport, model, overrides }` on each `[X.model_config]` block, and the committed template simply omits it.
 
-```bash
-sed -i '/^BACKUP_PROVIDER/d; /^BACKUP_MODEL/d' "$HOME/hermes-stack/honcho/config.toml"
-```
-
-Three fork-level fixes are also baked into the submodule's source (so a fresh submodule checkout already has them applied); they're worth knowing about if you're debugging a schema or network error:
+Three fork-level fixes are baked into the submodule's source (so a fresh submodule checkout already has them applied); they're worth knowing about if you're debugging a schema or network error:
 
 1. On native Linux Docker Engine, `host.docker.internal` does not resolve out of the box → handled by the submodule's `docker-compose.override.yml` (`extra_hosts: host.docker.internal:host-gateway`).
 2. If the host already runs a Postgres or Redis on 5432 / 6379, the scaffold's published ports collide → same override uses `ports: !reset []` to keep Honcho's services internal to the compose network.
-3. Honcho's pgvector schema is hardcoded to `Vector(1536)` (matching OpenAI's `text-embedding-3-small`). The `[vector_store] DIMENSIONS` setting in `config.toml` only affects LanceDB, so it does not resize the pgvector columns. Any attempt to insert a 768-dim `nomic-embed-text` vector raises `expected 1536 dimensions, not 768` and rolls back the transaction → the fork rewrites `Vector(1536)` to `Vector(768)` in `src/models.py` and the three migrations (`a1b2c3d4e5f6_initial_schema.py`, `917195d9b5e9_add_messageembedding_table.py`, `119a52b73c60_support_external_embeddings.py`).
+3. Upstream honcho's pgvector schema is hardcoded to `Vector(1536)` across `src/models.py` and its initial migrations (matching OpenAI's `text-embedding-3-small`). The `[vector_store] DIMENSIONS` setting only affects LanceDB, so it does not resize the pgvector columns. Any attempt to insert a 768-dim `nomic-embed-text` vector would raise `expected 1536 dimensions, not 768` and roll back. The fork adds an `h8i9j0k1l2m3` migration that alters `documents.embedding` and `message_embeddings.embedding` to `Vector(768)` after upstream's schema lands, and `[vector_store] MIGRATED = true` tells `src/config.py`'s relaxed validator to accept non-1536 dims once the migration has run.
 
-If you ever switch the embedding model to one that outputs a different dimension (e.g. a 1024-dim model), redo the sed across those four files and `docker compose down -v` before `up -d --build` — pgvector does not auto-migrate column width once a volume has been populated.
+If you ever switch the embedding model to one that outputs a different dimension (e.g. a 1024-dim model), add a new migration that alters the vector columns to the new width, update `[embedding] VECTOR_DIMENSIONS` and `[vector_store] DIMENSIONS` in `config.toml` to match, and `docker compose down -v` before `up -d --build` — pgvector does not auto-migrate column width once a volume has been populated.
 
 ### Step 4. Install Hermes Agent and wire it up
 
@@ -424,16 +412,64 @@ hermes setup        # follow the wizard
 hermes model        # Provider=ollama, Base URL=http://localhost:11434/v1, Model=glm-4.7-flash
 ```
 
-Point memory at the local Honcho. The interactive path:
+Point memory at the local Honcho. The interactive wizard is more extensive than the `hermes memory status` summary suggests — it walks through 11 prompts and writes the result to `~/.hermes/honcho.json`, then flips `memory.provider = honcho` in `config.yaml` and validates the connection:
 
 ```bash
 hermes memory setup
-# provider: honcho
-# Base URL: http://localhost:8000
+```
+
+Prompts in order, with defaults shown in `[brackets]`. For this stack, accepting every default (just hitting Enter) gets you a working setup against the local Honcho — customize only if you know why:
+
+| # | Prompt | Default | Choices / meaning |
+|---|---|---|---|
+| 1 | `Cloud or local?` | `local` | `cloud` = Honcho cloud at `api.honcho.dev`. `local` = your self-hosted server. |
+| 2 | `Base URL` | `http://localhost:8000` | Only change if you remapped the api container's port. After this the wizard prints `No API key set. Local no-auth ready.` — expected in this setup (`USE_AUTH=false`). |
+| 3 | `Your name (user peer)` | your Unix username | Peer ID for the human side. Keep it stable — changing it later makes Honcho treat the new name as a different peer with zero history. |
+| 4 | `AI peer name` | `hermes` | Peer ID for the assistant side. Also stable; observations are keyed on it. |
+| 5 | `Workspace ID` | `hermes` | Top-level container for all peers and sessions. Use different workspace IDs to run multiple unrelated setups against the same Honcho instance. |
+| 6 | `Observation mode` | `directional` | `directional` = all observations on, each AI peer builds its own view (what the gatekeeper fork is tuned for). `unified` = shared pool; user observes self, AI observes others only. |
+| 7 | `Write frequency` | `async` | `async` = background thread, no token cost (recommended). `turn` = sync write after every turn. `session` = batch write at session end. `N` = every N turns (e.g. `5`). |
+| 8 | `Recall mode` | `hybrid` | `hybrid` = auto-injected context **and** Honcho tools exposed to the chat model. `context` = auto-inject only (tools hidden). `tools` = tools only, no auto-injection. |
+| 9 | `Context tokens` | `uncapped` | Only shown for `hybrid` / `context` recall modes. `uncapped` = no limit. `N` = per-turn token cap (e.g. `1200`). Skipped entirely if recall mode is `tools`. |
+| 10 | `Dialectic cadence` | `3` | How often Honcho rebuilds its user model (each rebuild is an LLM call on the Honcho backend, i.e. on Bonsai in this stack). `1` = every turn (aggressive), `3` = every 3 turns (recommended), `5+` = sparse. |
+| 11 | `Session strategy` | `per-session` | `per-session` = fresh session per run, Honcho auto-injects context. `per-directory` = reuse session per cwd. `per-repo` = one session per git repo. `global` = single session across everything. |
+
+After the 11 prompts you'll see:
+
+```
+Config written to /home/baba-y/.hermes/honcho.json
+Memory provider set to 'honcho' in config.yaml
+Testing connection... OK
+
+Honcho is ready.
+Session:   <your-unix-user>
+Workspace: <whatever-you-entered>
+User:      <your user-peer name>
+AI peer:   <your AI-peer name>
+Observe:   directional
+Frequency: async
+Recall:    hybrid
+Sessions:  per-session
+```
+
+If `Testing connection...` fails, the api container isn't reachable from the host at the `Base URL` you gave — `curl -s http://localhost:8000/health` should return `{"status":"ok"}`; if not, re-check Step 3.
+
+For a quick re-check after restarts:
+
+```bash
 hermes memory status   # expect Provider: honcho / Plugin: installed / Status: available
 ```
 
-The non-interactive equivalent — write the connection details, then flip the provider flag (the JSON alone is not enough; without `config set`, Hermes stays on built-in memory only):
+**Non-interactive path.** If you want to skip the wizard entirely, the cleanest approach is to run the wizard once to generate a known-good `~/.hermes/honcho.json`, then commit that file as your template and copy it into place on new machines. Hand-writing it is possible but brittle — the 11 wizard answers map to a JSON shape that covers `baseUrl` plus per-host `aiPeer` / `peerName` / `workspace` plus the observation / write-frequency / recall / cadence / session-strategy settings, and the exact key names are hermes-version-dependent.
+
+The minimum to flip an existing (wizard-generated) config into active use — in case `memory.provider` wasn't set in `config.yaml`:
+
+```bash
+hermes config set memory.provider honcho
+hermes memory status
+```
+
+A bare-bones starter `honcho.json` covering just the connection + peer/workspace identity (wizard will fill the rest with defaults on first use):
 
 ```bash
 cat > "$HOME/.hermes/honcho.json" <<'JSON'
@@ -453,6 +489,8 @@ hermes config set memory.provider honcho
 hermes memory status
 ```
 
+If you already ran the wizard, this `cat > ...` will overwrite your choices — edit `aiPeer` / `peerName` / `workspace` to match what you entered, or skip the redirect entirely and just run `hermes config set memory.provider honcho` against the wizard-generated file.
+
 ## Switching between the gatekeeper stack and upstream Honcho
 
 This repo bundles **two mutually-exclusive honcho deployments**, so you can toggle between the local modifications and vanilla upstream without re-cloning anything.
@@ -467,7 +505,7 @@ Both stacks bind the same host ports (Postgres 5432, Redis 6379, API 8000), so o
 ### Run the gatekeeper stack (default)
 
 ```bash
-cd "$HOME/hermes-stack/honcho"
+cd "$HOME/nuncstans-hermes-stack/honcho"
 docker compose up -d
 ```
 
@@ -477,15 +515,15 @@ First-time setup — clones `plastic-labs/honcho` into `~/honcho` and overlays t
 
 ```bash
 # stop gatekeeper stack if it's up
-(cd "$HOME/hermes-stack/honcho" && docker compose down) 2>/dev/null || true
+(cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose down) 2>/dev/null || true
 
-bash "$HOME/hermes-stack/honcho-self-hosted/setup.sh"
+bash "$HOME/nuncstans-hermes-stack/honcho-self-hosted/setup.sh"
 ```
 
 Subsequent runs:
 
 ```bash
-(cd "$HOME/hermes-stack/honcho" && docker compose down) 2>/dev/null || true
+(cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose down) 2>/dev/null || true
 cd "$HOME/honcho" && docker compose up -d
 ```
 
@@ -493,7 +531,7 @@ cd "$HOME/honcho" && docker compose up -d
 
 ```bash
 (cd "$HOME/honcho" && docker compose down) 2>/dev/null || true
-cd "$HOME/hermes-stack/honcho" && docker compose up -d
+cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose up -d
 ```
 
 ### Keep the two stacks' data isolated
@@ -504,7 +542,7 @@ Pin an explicit project name per stack to keep volumes separate:
 
 ```bash
 # gatekeeper
-cd "$HOME/hermes-stack/honcho"
+cd "$HOME/nuncstans-hermes-stack/honcho"
 COMPOSE_PROJECT_NAME=honcho-gatekeeper docker compose up -d
 
 # upstream
@@ -523,17 +561,17 @@ Do this **before the first `up`** for each stack so the volumes are created unde
 
 ```bash
 # Honcho (data survives in the named volumes)
-cd "$HOME/hermes-stack/honcho" && docker compose down
-cd "$HOME/hermes-stack/honcho" && docker compose up -d
+cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose down
+cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose up -d
 
 # Bonsai (CUDA build needs LD_LIBRARY_PATH on restart)
 pkill -f llama-server
-cd "$HOME/hermes-stack/bonsai-llama.cpp"
+cd "$HOME/nuncstans-hermes-stack/bonsai-llama.cpp"
 LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH \
   nohup ./build/bin/llama-server \
-    -m "$HOME/hermes-stack/models/Bonsai-8B.gguf" \
+    -m "$HOME/nuncstans-hermes-stack/models/Bonsai-8B.gguf" \
     --host 0.0.0.0 --port 8080 -ngl 99 -c 16384 --parallel 1 \
-    --alias bonsai-8b > "$HOME/hermes-stack/bonsai.log" 2>&1 &
+    --alias bonsai-8b > "$HOME/nuncstans-hermes-stack/bonsai.log" 2>&1 &
 disown
 
 # Ollama
@@ -550,7 +588,7 @@ Use three terminals (tmux panes or iTerm splits both work):
 
 - **Pane W (watch)** — the pipeline-wide helper that shows memory formation in one place:
   ```bash
-  bash ~/hermes-stack/test/uat/scripts/watch_memory.sh
+  bash ~/nuncstans-hermes-stack/test/uat/scripts/watch_memory.sh
   ```
   The script color-tags three streams:
   - `[bonsai]`  prompt-processing and generation lines from `llama-server` (`bonsai.log`)
@@ -632,21 +670,23 @@ To audit where each inference went:
 
 ```bash
 # How many times Bonsai (Honcho's LLM) was invoked
-grep -c 'print_timing' ~/hermes-stack/bonsai.log
+grep -c 'print_timing' ~/nuncstans-hermes-stack/bonsai.log
 
 # Whether Ollama has glm-4.7-flash loaded (the main chat model)
 curl -s http://localhost:11434/api/ps | jq '.models[].name'
 
 # Which endpoints Honcho's api container is wired to.
 # Heredoc is used so the block survives terminal line-wrapping on paste.
-cd ~/hermes-stack/honcho && docker compose exec -T api python3 <<'PY'
+cd ~/nuncstans-hermes-stack/honcho && docker compose exec -T api python3 <<'PY'
 from src.config import settings
-print('LLM ->', settings.LLM.VLLM_BASE_URL)
-print('deriver ->', settings.DERIVER.PROVIDER, '/', settings.DERIVER.MODEL)
-print('dialectic.max ->', settings.DIALECTIC.LEVELS['max'].PROVIDER, '/', settings.DIALECTIC.LEVELS['max'].MODEL)
-print('summary ->', settings.SUMMARY.PROVIDER, '/', settings.SUMMARY.MODEL)
-print('dream ->', settings.DREAM.PROVIDER, '/', settings.DREAM.MODEL)
-print('embed ->', settings.LLM.OPENAI_COMPATIBLE_BASE_URL, '(provider=' + settings.LLM.EMBEDDING_PROVIDER + ')')
+def ep(mc):
+    return f"{mc.transport}/{mc.model} at {mc.overrides.base_url}"
+print('deriver       ->', ep(settings.DERIVER.MODEL_CONFIG))
+print('dialectic.max ->', ep(settings.DIALECTIC.LEVELS['max'].MODEL_CONFIG))
+print('summary       ->', ep(settings.SUMMARY.MODEL_CONFIG))
+print('dream/deduc   ->', ep(settings.DREAM.DEDUCTION_MODEL_CONFIG))
+print('dream/induc   ->', ep(settings.DREAM.INDUCTION_MODEL_CONFIG))
+print('embed         ->', ep(settings.EMBEDDING.MODEL_CONFIG))
 PY
 ```
 
@@ -661,7 +701,7 @@ Watching `nvidia-smi -l 2` makes the tiering obvious: user chat turns spike the 
 The repository ships an acceptance test that drives the whole pipeline and produces a pass/fail report:
 
 ```bash
-bash ~/hermes-stack/test/uat/scripts/run_all.sh
+bash ~/nuncstans-hermes-stack/test/uat/scripts/run_all.sh
 # -> test/uat/results/<run-id>/REPORT.md
 ```
 
@@ -678,13 +718,13 @@ See `experiments/uat-suite.md` for the S7 / S8 / S9 UAT scripts that exercise th
 - **`hermes memory status` still shows `Provider: (none — built-in only)`** — dropping `honcho.json` is not enough. Run `hermes config set memory.provider honcho`.
 - **`llama-server` segfaults at startup with no log output** — if you installed `cuda-toolkit-13-*`, the runtime tries to resolve D3DKMT symbols (`D3DKMTOpenSyncObjectFromNtHandle`, `D3DKMTCreateNativeFence`, etc.) that are not present in the current WSL `libdxcore.so`. Confirm with `LD_DEBUG=files ./build/bin/llama-server --help 2>&1 | grep -i "error: symbol"`. Fix: uninstall 13.x and install 12.9 per the Prerequisites block. See `experiments/maintainer-notes.md`.
 - **Deriver keeps timing out against Bonsai** — check with `ps -o pcpu,etime -p $(pgrep -f 'llama-server -m')` whether the process is actually hot. If `llama-server` was started without `-ngl 99` (or built with `-DGGML_CUDA=OFF`) it is running on CPU and each deriver call can take 30–160 s; rebuild with CUDA (see Step 1) and restart.
-- **Embeddings fail with `openai.AuthenticationError: 401`** — `settings.LLM.OPENAI_COMPATIBLE_BASE_URL` is unset inside the container, so the `openrouter` branch of `embedding_client.py` falls through to `https://openrouter.ai/api/v1` with whatever placeholder key you supplied. The env var name must be `LLM_OPENAI_COMPATIBLE_BASE_URL` — the `LLM_` prefix is non-optional because `LLMSettings` uses `env_prefix="LLM_"`. The `LLM_EMBEDDING_*` names documented in the upstream `config.toml` comment are not wired to anything.
-- **Embeddings fail with `model "openai/text-embedding-3-small" not found` on Ollama** — `embedding_client.py` hardcodes that model name. Create the alias with `ollama cp nomic-embed-text openai/text-embedding-3-small` (or whichever base embedding model you pulled). Any other name is ignored by Honcho.
-- **Embedding dimension mismatch (`expected 1536 dimensions, not 768`)** — `[vector_store] DIMENSIONS` in `config.toml` only affects LanceDB; the pgvector columns are hardcoded to `Vector(1536)` in `src/models.py` and in three migrations. The `sed` patch in Step 3 rewrites them to 768 for `nomic-embed-text`. After patching, you must `docker compose up -d --build` (and, if the volume already exists, `docker compose down -v` first to drop the 1536-width tables).
-- **`the input length exceeds the context length` (HTTP 400 from Ollama on embeddings)** — Honcho's `MAX_EMBEDDING_TOKENS` default (8192) is higher than `nomic-embed-text`'s 2048-token native context. A single message above 2048 tokens is sent as one oversized chunk and rejected. Set `[app] MAX_EMBEDDING_TOKENS = 2048` in `config.toml` so the chunker splits longer messages before they hit Ollama.
-- **`the input length exceeds the context length` (HTTP 400 from Bonsai mid-deriver)** — the deriver agent iterates tool calls; each round appends the model's previous output and the tool result. Starting from a ~2k-token prompt plus Honcho's default `MAX_OUTPUT_TOKENS = 4096`, two rounds already spill past the scaffold's `-c 8192`. Run `llama-server` with `-c 16384`, and drop `[deriver] MAX_OUTPUT_TOKENS` to `1500` and `[deriver] MAX_INPUT_TOKENS` to `8000` so the cumulative loop stays inside Bonsai's window.
-- **`NotFoundError` on a deriver retry (falling back to `custom/bonsai-8b`)** — the scaffold's `BACKUP_PROVIDER = "custom"` points at whatever `OPENAI_COMPATIBLE_BASE_URL` is (in local mode: Ollama), which doesn't serve `bonsai-8b`. Strip all `BACKUP_PROVIDER` / `BACKUP_MODEL` lines from `config.toml` — local mode has one provider, there is no fallback.
-- **Hermes seems to "forget" everything after you quit with Ctrl+C** — Honcho is storing the messages, but the deriver only fires once a workspace's pending messages exceed `REPRESENTATION_BATCH_MAX_TOKENS`. The scaffold default (1024) is tuned for long, dense turns; casual chat (a few short sentences at a time) can sit below the threshold for a whole session, so zero observations get extracted and nothing is recallable. Lower it to `[deriver] REPRESENTATION_BATCH_MAX_TOKENS = 200` and restart the deriver: `cd ~/hermes-stack/honcho && docker compose up -d --build deriver`.
-- **Deriver hangs and `/slots` returns `failed to find free space in the KV cache`** — `llama-server`'s default 4-slot parallelism multiplies the KV allocation, and Honcho pushes long tool-call prompts that make the slots compete for cache. Restart Bonsai with `--parallel 1` so one request gets the full 16k context: `pkill -9 -f "llama-server -m" && cd ~/hermes-stack/bonsai-llama.cpp && nohup ./build/bin/llama-server -m ~/hermes-stack/models/Bonsai-8B.gguf --host 0.0.0.0 --port 8080 -ngl 0 -c 16384 --parallel 1 --alias bonsai-8b > ~/hermes-stack/bonsai.log 2>&1 & disown`. Throughput drops because requests serialize, but each one completes instead of thrashing.
+- **Embeddings fail with `openai.AuthenticationError: 401`** — the OpenAI SDK inside the container got an empty `api_key`, so it sent no Authorization header and the upstream (Ollama's OpenAI-compat endpoint) returned 401. Check `settings.EMBEDDING.MODEL_CONFIG.overrides.api_key` first, then the openai-transport fallback (`_default_embedding_api_key` in `src/config.py` returns `settings.LLM.OPENAI_API_KEY`). The committed `config.toml.bonsai-example` sets `[llm] OPENAI_API_KEY = "not-needed"` — if your `config.toml` is missing that line, add it, or set `LLM_OPENAI_API_KEY=not-needed` in `.env`.
+- **Embeddings fail with `model "openai/text-embedding-3-small" not found` on Ollama** — the tracked `config.toml.bonsai-example` pins `[embedding.model_config] model = "openai/text-embedding-3-small"`. If you pulled `nomic-embed-text` directly and skipped the `ollama cp` alias, Ollama has no model by that name. Either `ollama cp nomic-embed-text openai/text-embedding-3-small`, or change the `model` key in `config.toml` to match whatever you actually pulled — the model name is no longer hardcoded (post-refactor it flows through `EMBEDDING.MODEL_CONFIG.model`).
+- **Embedding dimension mismatch (`expected 1536 dimensions, not 768`)** — the fork's `h8i9j0k1l2m3` migration flips the pgvector columns to `Vector(768)`, and `[vector_store] MIGRATED = true` tells the relaxed validator in `src/config.py` to accept non-1536 dims. If you're hitting this, either the migration didn't run (check `docker compose logs api | grep alembic`) or a stale 1536-width volume survived from an earlier attempt — `docker compose down -v` then `up -d --build` to rebuild the schema. Do not `sed` `Vector(1536)` in `src/models.py` by hand; the migration is the supported path.
+- **`the input length exceeds the context length` (HTTP 400 from Ollama on embeddings)** — honcho's `EMBEDDING.MAX_INPUT_TOKENS` default (8192) is higher than `nomic-embed-text`'s 2048-token native context. A single message above 2048 tokens is sent as one oversized chunk and rejected. Set `[embedding] MAX_INPUT_TOKENS = 2048` in `config.toml` so the chunker splits longer messages before they hit Ollama. (Pre-refactor this was `[app] MAX_EMBEDDING_TOKENS`; the new key lives under `[embedding]` and the old one is silently ignored.)
+- **`the input length exceeds the context length` (HTTP 400 from Bonsai mid-deriver)** — the deriver agent iterates tool calls; each round appends the model's previous output and the tool result. Starting from a ~2k-token prompt plus the scaffold's `max_output_tokens = 4096`, two rounds already spill past a `-c 8192` llama-server. Run `llama-server` with `-c 16384`, and set `[deriver.model_config] max_output_tokens = 1500` plus `[deriver] MAX_INPUT_TOKENS = 8000` so the cumulative loop stays inside Bonsai's window.
+- **`NotFoundError` on a deriver retry bouncing to an unexpected model** — you added a nested `fallback = { ... }` to a `[X.model_config]` block pointing at a provider that doesn't serve `bonsai-8b`. Remove it; the new schema's fallback is opt-in and this local-only setup has no second provider. (The old flat `BACKUP_PROVIDER` / `BACKUP_MODEL` keys have been removed — if you ported them from an older `config.toml`, the new code silently ignores them.)
+- **Hermes seems to "forget" everything after you quit with Ctrl+C** — Honcho is storing the messages, but the deriver only fires once a workspace's pending messages exceed `REPRESENTATION_BATCH_MAX_TOKENS`. The scaffold default (1024) is tuned for long, dense turns; casual chat (a few short sentences at a time) can sit below the threshold for a whole session, so zero observations get extracted and nothing is recallable. Lower it to `[deriver] REPRESENTATION_BATCH_MAX_TOKENS = 200` and restart the deriver: `cd ~/nuncstans-hermes-stack/honcho && docker compose up -d --build deriver`.
+- **Deriver hangs and `/slots` returns `failed to find free space in the KV cache`** — `llama-server`'s default 4-slot parallelism multiplies the KV allocation, and Honcho pushes long tool-call prompts that make the slots compete for cache. Restart Bonsai with `--parallel 1` so one request gets the full 16k context: `pkill -9 -f "llama-server -m" && cd ~/nuncstans-hermes-stack/bonsai-llama.cpp && nohup ./build/bin/llama-server -m ~/nuncstans-hermes-stack/models/Bonsai-8B.gguf --host 0.0.0.0 --port 8080 -ngl 0 -c 16384 --parallel 1 --alias bonsai-8b > ~/nuncstans-hermes-stack/bonsai.log 2>&1 & disown`. Throughput drops because requests serialize, but each one completes instead of thrashing.
 - **Hermes tool calls fail** — the main chat model does not support function calling. Pick a tool-calling capable model in Ollama (`glm-4.7-flash`, `qwen3.5`, etc.).
 - **Bonsai still feels slow on GPU** — check `nvidia-smi` while a deriver/dialectic turn is in flight. VRAM should climb ~7.6 GiB (Bonsai + 16k KV cache) and `utilization.gpu` should be >50%. If VRAM sits flat, `llama-server` is silently on CPU — confirm `ldd ./build/bin/llama-server | grep cublas` returns a path, and that the process was launched with `-ngl 99`. See `benchmark.md` for the expected throughput numbers to compare against.
