@@ -1,0 +1,9 @@
+scenario	status	elapsed_s
+00_preflight	PASS	2
+s1_smoke	PASS	11
+s2_ollama	PASS	11
+s3_embed	PASS	22
+s4_deriver	PASS	255
+s5_dialectic	PASS	133
+s6_cross_ses	PASS	68
+99_final	PASS	1

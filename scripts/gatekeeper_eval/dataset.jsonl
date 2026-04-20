@@ -1,0 +1,30 @@
+{"id":"L01","msg":"My name is Yuki and I live in California.","gt":"A","note":"clear_literal_self"}
+{"id":"L02","msg":"I work as a backend engineer. My cat is named Miso.","gt":"A","note":"clear_literal_self"}
+{"id":"L03","msg":"I'm allergic to peanuts.","gt":"A","note":"important_biographical"}
+{"id":"L04","msg":"My partner and I moved to Tokyo last month.","gt":"A","note":"life_event"}
+{"id":"L05","msg":"I prefer Python for ML but TypeScript for frontend.","gt":"A","note":"preference"}
+{"id":"T01","msg":"I had coffee this morning.","gt":"A-low-importance","note":"trivial_literal"}
+{"id":"T02","msg":"Today was a bit cloudy.","gt":"A-low-importance","note":"trivial_weather"}
+{"id":"T03","msg":"I'm a little tired tonight.","gt":"A-low-importance","note":"trivial_emotion"}
+{"id":"B01","msg":"If I were Napoleon, I'd have conquered Russia in winter.","gt":"B","note":"hypothetical_roleplay"}
+{"id":"B02","msg":"Hypothetically, if I moved to Osaka, would that be crazy?","gt":"B","note":"explicit_hypothetical"}
+{"id":"B03","msg":"Oh yeah, I LOVE Monday mornings. /s","gt":"B","note":"explicit_sarcasm"}
+{"id":"B04","msg":"This weather is the absolute worst!!! I hate it!","gt":"B","note":"venting"}
+{"id":"B05","msg":"Imagine I was a firefighter. I'd rush into any burning building.","gt":"B","note":"imagine_roleplay"}
+{"id":"B06","msg":"She said 'I'm from Mars'. Obviously joking.","gt":"B","note":"quoting"}
+{"id":"B07","msg":"Some people say their cats are named Miso. Not me.","gt":"B","note":"explicit_negation"}
+{"id":"B08","msg":"um, uh, you know, like, whatever, I dunno, so yeah.","gt":"B","note":"filler_low_density"}
+{"id":"N01","msg":"My name is NOT Alice. It's Yuki.","gt":"A","note":"negation_then_correction_assertion"}
+{"id":"N02","msg":"Actually, I don't live in Osaka anymore. Moved to Kyoto.","gt":"A","note":"correction_of_prior"}
+{"id":"N03","msg":"Wait, I misspoke earlier. My cat is named Tofu, not Miso.","gt":"A","note":"explicit_correction"}
+{"id":"A01","msg":"I might be allergic to shellfish, but not sure yet.","gt":"A-mid-confidence","note":"uncertain_self"}
+{"id":"A02","msg":"I think I want to move to Osaka next year.","gt":"A-mid-confidence","note":"tentative_plan"}
+{"id":"A03","msg":"Maybe Python is fine, or maybe Rust. Haven't decided.","gt":"A-low-importance","note":"undecided_preference"}
+{"id":"F01","msg":"Gonna grab coffee. Need milk too. And eggs. And cat food.","gt":"A-low-importance","note":"grocery_list_fast"}
+{"id":"F02","msg":"Okay so matcha, definitely matcha, strong matcha, matcha daily.","gt":"A","note":"repetitive_emphasis"}
+{"id":"F03","msg":"Writing a novel where my protagonist is a matcha farmer in Kyoto.","gt":"B","note":"creative_work_context"}
+{"id":"F04","msg":"REMEMBER: my emergency contact is 555-1234.","gt":"A-critical","note":"explicit_remember_prefix"}
+{"id":"F05","msg":"Important: my social security number is 123-45-6789.","gt":"A-critical","note":"sensitive_important"}
+{"id":"D01","msg":"hi","gt":"A-low-importance","note":"greeting_minimal"}
+{"id":"D02","msg":"thanks","gt":"A-low-importance","note":"acknowledgment"}
+{"id":"D03","msg":"yes","gt":"A-low-importance","note":"single_word"}

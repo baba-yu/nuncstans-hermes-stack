@@ -1,0 +1,41 @@
+
+========================================
+S9 correction → supersede (UAT_RUN_ID=uat-20260419-234708)
+========================================
+[23:47:08] created ws=uat-20260419-234708-s9 peer=emma ses=corr
+[23:47:08] === phase 1: post literal A (expect ready + observation) ===
+[23:47:08] A tokens=211
+[23:47:08] waiting up to 90s for A gatekeeper verdict...
+[23:47:17] A status=ready
+[23:47:17] PASS: A verdict=ready
+[23:47:17] waiting up to 5 min for deriver to drain A...
+[23:47:28] PASS: A queue drained
+[23:47:31] live documents after A: 1
+[23:47:31] PASS: observations created for A: 1
+[23:47:31] live Kyoto observations before correction: 1
+[23:47:31] === phase 2: post correction B (expect ready + correction_of_prior=true) ===
+[23:47:31] B tokens=249
+[23:47:31] waiting up to 90s for B gatekeeper verdict...
+[23:47:38] B status=ready
+[23:47:38] PASS: B verdict=ready
+[23:47:38] B correction_of_prior=true
+[23:47:38] PASS: B correction_of_prior=true
+[23:47:38] waiting up to 5 min for deriver + supersede pass to finish...
+[23:47:43] PASS: B queue drained
+[23:47:54] superseded documents: 6
+[23:47:54] PASS: at least one observation was superseded
+[23:47:54] Kyoto observations now soft-deleted: 6
+[23:47:54] PASS: Kyoto claim specifically superseded
+[23:47:54] sample supersede_reason: User corrected location to Osaka, contradicting previous claims about living in Kyoto.
+[23:47:54] PASS: supersede_reason recorded
+                                     snippet                                      | dead |   reason   
+----------------------------------------------------------------------------------+------+------------
+ 2026-04-20 06:47:08 emma: I'm Emma. I live in Kyoto, and I work as a frontend en | t    | superseded
+ 2026-04-20 06:47:31 emma: Actually I need to correct something important. I do N | t    | superseded
+ 2026-04-20 06:47:31 emma: Actually I need to correct something important. I do N | t    | superseded
+ 2026-04-20 06:47:31 emma: Actually I need to correct something important. I do N | t    | superseded
+ 2026-04-20 06:47:31 emma: Actually I need to correct something important. I do N | t    | superseded
+ 2026-04-20 06:47:31 emma: Actually I need to correct something important. I do N | t    | superseded
+(6 rows)
+
+[23:47:55] S9: OK

@@ -1,0 +1,7 @@
+PASS: A gatekeeper verdict: ready
+PASS: queue drained
+PASS: observations created: 1
+PASS: representation contains 8 seed keywords
+PASS: B gatekeeper verdict: demoted
+PASS: demoted message produced no new observations
+PASS: no document mentions Napoleon

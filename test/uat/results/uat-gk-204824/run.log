@@ -1,0 +1,10 @@
+
+========================================
+S7 gatekeeper end-to-end (UAT_RUN_ID=uat-gk-204824)
+========================================
+[20:48:24] created ws=uat-gk-204824-s7 peer=yuki ses=gk
+[20:48:24] posted A (literal) mid=Fc356ZuqXFzySU0HOwFXz tokens=13
+[20:48:24] posted B (hypothetical) mid=OzlabrasowP8MdTigzRtD tokens=13
+[20:48:24] posted C (ambiguous) mid=khCXLC5rrMVxceXIqzaw0 tokens=13
+[20:48:32] posted D (correction) mid=mVCG7gm78UlYwYx35Cl5s tokens=17
+[20:48:37] waiting for gatekeeper to classify each message (up to 90s each)...

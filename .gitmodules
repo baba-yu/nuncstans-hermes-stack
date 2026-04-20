@@ -1,0 +1,10 @@
+[submodule "honcho"]
+	path = honcho
+	url = https://github.com/baba-yu/nunc-honcho.git
+	branch = dev
+[submodule "bonsai-llama.cpp"]
+	path = bonsai-llama.cpp
+	url = https://github.com/PrismML-Eng/llama.cpp
+[submodule "honcho-self-hosted"]
+	path = honcho-self-hosted
+	url = https://github.com/elkimek/honcho-self-hosted.git

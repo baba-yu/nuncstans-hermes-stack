@@ -1,0 +1,36 @@
+
+========================================
+S9 correction → supersede (UAT_RUN_ID=uat-20260419-230239)
+========================================
+[23:02:39] created ws=uat-20260419-230239-s9 peer=emma ses=corr
+[23:02:39] === phase 1: post literal A (expect ready + observation) ===
+[23:02:39] A tokens=211
+[23:02:39] waiting up to 90s for A gatekeeper verdict...
+[23:02:42] A status=ready
+[23:02:42] PASS: A verdict=ready
+[23:02:42] waiting up to 5 min for deriver to drain A...
+[23:02:54] PASS: A queue drained
+[23:02:58] live documents after A: 1
+[23:02:58] PASS: observations created for A: 1
+[23:02:58] live Kyoto observations before correction: 1
+[23:02:58] === phase 2: post correction B (expect ready + correction_of_prior=true) ===
+[23:02:58] B tokens=249
+[23:02:58] waiting up to 90s for B gatekeeper verdict...
+[23:03:05] B status=ready
+[23:03:05] PASS: B verdict=ready
+[23:03:05] B correction_of_prior=true
+[23:03:05] PASS: B correction_of_prior=true
+[23:03:05] waiting up to 5 min for deriver + supersede pass to finish...
+[23:03:15] PASS: B queue drained
+[23:03:23] superseded documents: 1
+[23:03:23] PASS: at least one observation was superseded
+[23:03:24] Kyoto observations now soft-deleted: 1
+[23:03:24] PASS: Kyoto claim specifically superseded
+[23:03:24] sample supersede_reason: User corrected location to Osaka
+[23:03:24] PASS: supersede_reason recorded
+                                     snippet                                      | dead |   reason   
+----------------------------------------------------------------------------------+------+------------
+ I'm Emma. I live in Kyoto, and I work as a frontend engineer. I have a rescue ca | t    | superseded
+(1 row)
+
+[23:03:24] S9: OK

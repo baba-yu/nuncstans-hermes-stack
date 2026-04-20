@@ -1,0 +1,26 @@
+PASS: Bonsai alive with alias bonsai-8b
+PASS: Ollama serves glm-4.7-flash
+PASS: Ollama serves openai/text-embedding-3-small alias
+PASS: Honcho API responds 200
+PASS: EMBEDDING_PROVIDER = openrouter
+PASS: OPENAI_COMPATIBLE_BASE_URL = http://host.docker.internal:11434/v1
+PASS: VLLM_BASE_URL = http://host.docker.internal:8080/v1
+PASS: DERIVER_PROVIDER = vllm
+PASS: DERIVER_MODEL = bonsai-8b
+PASS: DERIVER_REPR_BATCH = 1024
+PASS: APP_MAX_EMBEDDING_TOKENS = 2048
+PASS: VS_DIMENSIONS = 768
+PASS: BACKUP_PROVIDER = null
+PASS: no BACKUP_* lines
+PASS: message_embeddings.embedding = Vector(768)
+PASS: hermes CLI installed: Hermes Agent v0.10.0 (2026.4.16)
+PASS: embedding row written
+PASS: Bonsai not hit (0 print_timing)
+PASS: Ollama chat model not loaded
+PASS: Ollama generated output (content=4, reasoning=198 chars)
+PASS: glm-4.7-flash loaded
+PASS: Bonsai not hit (0 print_timing)
+PASS: no embedding errors
+PASS: embedding row written (1)
+PASS: Bonsai not hit (expected embedding-only)
+PASS: queue drained

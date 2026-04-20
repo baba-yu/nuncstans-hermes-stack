@@ -1,0 +1,14 @@
+
+========================================
+S8 gatekeeper → deriver → observation (UAT_RUN_ID=uat-20260420-112500)
+========================================
+[11:25:00] created ws=uat-20260420-112500-s8
+[11:25:00] === phase 1: literal A message (expect ready + observation) ===
+[11:25:03] A tokens=232
+[11:25:03] waiting up to 60s for gatekeeper verdict...
+[11:25:13] A status=ready
+[11:25:13] PASS: A gatekeeper verdict: ready
+[11:25:13] waiting up to 5 min for deriver to drain the ready batch...
+[11:25:23] PASS: queue drained
+[11:25:27] documents in uat-20260420-112500-s8 after A: 0
+[11:25:27] FAIL: no observations created for A

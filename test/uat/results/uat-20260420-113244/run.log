@@ -1,0 +1,41 @@
+
+========================================
+S9 correction → supersede (UAT_RUN_ID=uat-20260420-113244)
+========================================
+[11:32:44] created ws=uat-20260420-113244-s9 peer=emma ses=corr
+[11:32:44] === phase 1: post literal A (expect ready + observation) ===
+[11:32:44] A tokens=211
+[11:32:44] waiting up to 90s for A gatekeeper verdict...
+[11:32:51] A status=ready
+[11:32:51] PASS: A verdict=ready
+[11:32:51] waiting up to 5 min for deriver to drain A...
+[11:32:56] PASS: A queue drained
+[11:33:00] live documents after A: 1
+[11:33:00] PASS: observations created for A: 1
+[11:33:00] live Kyoto observations before correction: 1
+[11:33:00] === phase 2: post correction B (expect ready + correction_of_prior=true) ===
+[11:33:00] B tokens=249
+[11:33:00] waiting up to 90s for B gatekeeper verdict...
+[11:33:04] B status=ready
+[11:33:04] PASS: B verdict=ready
+[11:33:04] B correction_of_prior=true
+[11:33:04] PASS: B correction_of_prior=true
+[11:33:04] waiting up to 5 min for deriver + supersede pass to finish...
+[11:33:09] PASS: B queue drained
+[11:33:17] superseded documents: 3
+[11:33:17] PASS: at least one observation was superseded
+[11:33:18] Kyoto observations now soft-deleted: 2
+[11:33:18] PASS: Kyoto claim specifically superseded
+[11:33:18] sample supersede_reason: User corrected location to Osaka, contradicting previous claims about living in Kyoto.
+[11:33:18] PASS: supersede_reason recorded
+                                     snippet                                      | dead |   reason   
+----------------------------------------------------------------------------------+------+------------
+ 2026-04-20 18:32:44 emma: I'm Emma. I live in Kyoto, and I work as a frontend en | f    | 
+ I'm Emma, a frontend engineer, vegetarian, partner is Jun, cat is Pepper.        | f    | 
+ 2026-04-20 18:33:00 emma: Actually I need to correct something important. I do N | t    | superseded
+ I moved to Osaka last month.                                                     | f    | 
+ I do NOT live in Kyoto.                                                          | t    | superseded
+ I live in Osaka now.                                                             | t    | superseded
+(6 rows)
+
+[11:33:19] S9: OK

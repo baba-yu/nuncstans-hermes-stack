@@ -1,0 +1,36 @@
+
+========================================
+S8 gatekeeper → deriver → observation (UAT_RUN_ID=uat-20260420-113145)
+========================================
+[11:31:45] created ws=uat-20260420-113145-s8
+[11:31:45] === phase 1: literal A message (expect ready + observation) ===
+[11:31:45] A tokens=232
+[11:31:45] waiting up to 60s for gatekeeper verdict...
+[11:31:52] A status=ready
+[11:31:52] PASS: A gatekeeper verdict: ready
+[11:31:52] waiting up to 5 min for deriver to drain the ready batch...
+[11:32:02] PASS: queue drained
+[11:32:05] documents in uat-20260420-113145-s8 after A: 1
+[11:32:05] PASS: observations created: 1
+[11:32:05] PASS: representation contains 8 seed keywords
+[11:32:05] === phase 2: hypothetical B message (expect demoted, no new observation) ===
+[11:32:05] B tokens=71
+[11:32:05] waiting up to 60s for gatekeeper verdict...
+[11:32:12] B status=demoted
+[11:32:12] PASS: B gatekeeper verdict: demoted
+[11:32:12] waiting 30s to give deriver a chance (it shouldn't process demoted row)...
+[11:32:43] documents in uat-20260420-113145-s8 after B: 1 (was 1)
+[11:32:43] PASS: demoted message produced no new observations
+[11:32:43] PASS: no document mentions Napoleon
+                             msg                              | status  
+--------------------------------------------------------------+---------
+ I'm Alice. I love matcha lattes every morning. I go rock cli | ready
+ If I were Napoleon Bonaparte, I would have led my troops thr | demoted
+(2 rows)
+
+                                    substring                                     
+----------------------------------------------------------------------------------
+ 2026-04-20 18:31:45 alice: I'm Alice. I love matcha lattes every morning. I go r
+(1 row)
+
+[11:32:44] S8: OK

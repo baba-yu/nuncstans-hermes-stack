@@ -1,0 +1,13 @@
+{
+  "EMBEDDING_PROVIDER": "openrouter",
+  "OPENAI_COMPATIBLE_BASE_URL": "http://host.docker.internal:11434/v1",
+  "VLLM_BASE_URL": "http://host.docker.internal:8080/v1",
+  "DERIVER_PROVIDER": "vllm",
+  "DERIVER_MODEL": "bonsai-8b",
+  "DERIVER_MAX_OUTPUT_TOKENS": 1500,
+  "DERIVER_MAX_INPUT_TOKENS": 8000,
+  "DERIVER_REPR_BATCH": 1024,
+  "BACKUP_PROVIDER": null,
+  "APP_MAX_EMBEDDING_TOKENS": 2048,
+  "VS_DIMENSIONS": 768
+}

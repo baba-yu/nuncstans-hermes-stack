@@ -1,0 +1,9 @@
+PASS: A verdict=ready
+PASS: A queue drained
+PASS: observations created for A: 1
+PASS: B verdict=ready
+PASS: B correction_of_prior=true
+PASS: B queue drained
+PASS: at least one observation was superseded
+PASS: Kyoto claim specifically superseded
+PASS: supersede_reason recorded

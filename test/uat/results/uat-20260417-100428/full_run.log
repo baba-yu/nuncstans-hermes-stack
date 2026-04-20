@@ -1,0 +1,143 @@
+UAT_RUN_ID=uat-20260417-100428
+RESULTS_DIR=/home/baba-y/hermes-stack/test/uat/results/uat-20260417-100428
+
+========================================
+PREFLIGHT (UAT_RUN_ID=uat-20260417-100428)
+========================================
+[10:04:28] 2.2 Bonsai /v1/models ...
+[10:04:28] PASS: Bonsai alive with alias bonsai-8b
+[10:04:28] 2.2 Ollama /api/tags ...
+[10:04:28] PASS: Ollama serves glm-4.7-flash
+[10:04:28] PASS: Ollama serves openai/text-embedding-3-small alias
+[10:04:28] 2.2 Honcho /openapi.json ...
+[10:04:28] PASS: Honcho API responds 200
+[10:04:28] 2.3 Honcho container settings ...
+[10:04:29] PASS: EMBEDDING_PROVIDER = openrouter
+[10:04:29] PASS: OPENAI_COMPATIBLE_BASE_URL = http://host.docker.internal:11434/v1
+[10:04:29] PASS: VLLM_BASE_URL = http://host.docker.internal:8080/v1
+[10:04:29] PASS: DERIVER_PROVIDER = vllm
+[10:04:29] PASS: DERIVER_MODEL = bonsai-8b
+[10:04:29] PASS: DERIVER_REPR_BATCH = 1024
+[10:04:29] PASS: APP_MAX_EMBEDDING_TOKENS = 2048
+[10:04:29] PASS: VS_DIMENSIONS = 768
+[10:04:29] PASS: BACKUP_PROVIDER = null
+[10:04:29] 2.4 No BACKUP_* lines in config.toml ...
+[10:04:29] PASS: no BACKUP_* lines
+[10:04:29] 2.5 pgvector message_embeddings dim ...
+[10:04:29] PASS: message_embeddings.embedding = Vector(768)
+[10:04:30] PASS: hermes CLI installed: Hermes Agent v0.10.0 (2026.4.16)
+
+[10:04:30] PREFLIGHT: OK
+
+========================================
+S1 pass-through smoke (UAT_RUN_ID=uat-20260417-100428)
+========================================
+[10:04:30] created ws=uat-20260417-100428-s1 peer=alice ses=smoke
+[10:04:30] posted message, token_count=13
+[10:04:41] message_embeddings uat-20260417-100428-s1: 0 -> 1
+[10:04:41] PASS: embedding row written
+[10:04:41] PASS: Bonsai not hit (0 print_timing)
+[10:04:41] PASS: Ollama chat model not loaded
+[10:04:41] S1: OK
+
+========================================
+S2 Ollama direct chat (UAT_RUN_ID=uat-20260417-100428)
+========================================
+[10:04:51] response content: 
+[10:04:51] response reasoning len: 557
+[10:04:51] PASS: Ollama generated output (content=0, reasoning=557 chars)
+[10:04:52] PASS: glm-4.7-flash loaded
+[10:04:52] PASS: Bonsai not hit (0 print_timing)
+[10:04:52] S2: OK
+
+========================================
+S3 embedding regression (middle-sized) (UAT_RUN_ID=uat-20260417-100428)
+========================================
+[10:04:53] posted token_count=1601
+[10:05:13] api error log hits: 0
+[10:05:14] message_embeddings in uat-20260417-100428-s3: 1
+[10:05:14] PASS: no embedding errors
+[10:05:14] PASS: embedding row written (1)
+[10:05:14] PASS: Bonsai not hit (expected embedding-only)
+[10:05:14] S3: OK
+
+========================================
+S4 deriver -> Bonsai observation (UAT_RUN_ID=uat-20260417-100428)
+========================================
+[10:05:15] posted token_count=1441
+[10:05:18] queue claimed at i=1
+[10:09:29] PASS: queue drained
+[10:09:29] S4 total elapsed: 255s
+[10:09:29] documents obs count for uat-20260417-100428-s4: 1
+[10:09:29] PASS: observations saved: 1
+[10:09:29]   keyword match: matcha
+[10:09:29]   keyword match: climb
+[10:09:29]   keyword match: bonsai
+[10:09:29]   keyword match: bike
+[10:09:29]   keyword match: kyoto
+[10:09:29]   keyword match: postgres
+[10:09:29]   keyword match: miso
+[10:09:29]   keyword match: alice
+[10:09:29]   keyword match: engineer
+[10:09:29] PASS: representation contains 9 seed keyword(s)
+[10:09:29] PASS: Bonsai hit 2 times
+[10:09:29] S4: OK
+
+========================================
+S5 dialectic -> Bonsai (UAT_RUN_ID=uat-20260417-100428)
+========================================
+[10:11:42] dialectic response length: 209 chars
+[10:11:42] content preview: Alice has the following hobbies:
+
+1. Rock climbing at the Gravity Gym every Sunday.
+2. Riding a red road bike to the gym.
+3. Collecting bonsai trees, especially junipers.
+4. Liking matcha lattes every
+[10:11:42] PASS: dialectic returned content
+[10:11:42]   keyword match: matcha
+[10:11:42]   keyword match: climb
+[10:11:42]   keyword match: bonsai
+[10:11:42]   keyword match: bike
+[10:11:42] PASS: dialectic response contains 4 seed keyword(s)
+[10:11:42] PASS: Bonsai hit 1 times
+[10:11:42] S5: OK
+
+========================================
+S6 cross-session recall (UAT_RUN_ID=uat-20260417-100428)
+========================================
+[10:11:42] created new session recall under uat-20260417-100428-s4 with a neutral message
+[10:12:50] cross-session chat length: 291 chars
+[10:12:50]   keyword match: matcha
+[10:12:50]   keyword match: climb
+[10:12:50]   keyword match: bonsai
+[10:12:50]   keyword match: bike
+[10:12:50]   keyword match: kyoto
+[10:12:50]   keyword match: postgres
+[10:12:50]   keyword match: miso
+[10:12:50]   keyword match: engineer
+[10:12:50] PASS: cross-session recall surfaced 8 keyword(s)
+[10:12:50] PASS: Bonsai hit 1 times
+[10:12:50] S6: OK
+
+========================================
+99 final assertions (UAT_RUN_ID=uat-20260417-100428)
+========================================
+[10:12:50] PASS: no Ollama chat leaks in deriver/dialectic windows
+[10:12:50] Bonsai print_timing total in bonsai.log: 6
+[10:12:50] PASS: Bonsai was called 6 times (>=3)
+[10:12:51] PASS: documents count >= 1 (5)
+[10:12:51] 99: OK
+
+========================================
+UAT RESULTS (uat-20260417-100428)
+========================================
+scenario      status  elapsed_s
+00_preflight  PASS    2
+s1_smoke      PASS    11
+s2_ollama     PASS    11
+s3_embed      PASS    22
+s4_deriver    PASS    255
+s5_dialectic  PASS    133
+s6_cross_ses  PASS    68
+99_final      PASS    1
+OVERALL: PASS

@@ -1,0 +1,6 @@
+scenario	status	elapsed_s
+00_preflight	PASS	2
+s1_smoke	PASS	16
+s2_ollama	PASS	7
+s3_embed	PASS	26
+s4_deriver	FAIL	260

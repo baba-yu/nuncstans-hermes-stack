@@ -1,0 +1,14 @@
+
+========================================
+S9 correction → supersede (UAT_RUN_ID=uat-20260420-112527)
+========================================
+[11:25:27] created ws=uat-20260420-112527-s9 peer=emma ses=corr
+[11:25:27] === phase 1: post literal A (expect ready + observation) ===
+[11:25:30] A tokens=211
+[11:25:30] waiting up to 90s for A gatekeeper verdict...
+[11:25:37] A status=ready
+[11:25:37] PASS: A verdict=ready
+[11:25:37] waiting up to 5 min for deriver to drain A...
+[11:25:47] PASS: A queue drained
+[11:25:50] live documents after A: 0
+[11:25:50] FAIL: no observations created for A

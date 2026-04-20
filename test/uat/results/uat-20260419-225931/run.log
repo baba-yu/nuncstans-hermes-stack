@@ -1,0 +1,26 @@
+
+========================================
+S9 correction → supersede (UAT_RUN_ID=uat-20260419-225931)
+========================================
+[22:59:31] created ws=uat-20260419-225931-s9 peer=emma ses=corr
+[22:59:31] === phase 1: post literal A (expect ready + observation) ===
+[22:59:32] A tokens=211
+[22:59:32] waiting up to 90s for A gatekeeper verdict...
+[22:59:35] A status=ready
+[22:59:35] PASS: A verdict=ready
+[22:59:35] waiting up to 5 min for deriver to drain A...
+[22:59:45] PASS: A queue drained
+[22:59:49] live documents after A: 1
+[22:59:49] PASS: observations created for A: 1
+[22:59:49] live Kyoto observations before correction: 1
+[22:59:49] === phase 2: post correction B (expect ready + correction_of_prior=true) ===
+[22:59:49] B tokens=249
+[22:59:49] waiting up to 90s for B gatekeeper verdict...
+[22:59:56] B status=ready
+[22:59:56] PASS: B verdict=ready
+[22:59:56] B correction_of_prior=true
+[22:59:56] PASS: B correction_of_prior=true
+[22:59:56] waiting up to 5 min for deriver + supersede pass to finish...
+[23:00:08] PASS: B queue drained
+[23:00:17] superseded documents: 0
+[23:00:17] FAIL: no observations superseded after correction

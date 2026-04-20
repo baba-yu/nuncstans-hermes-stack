@@ -1,0 +1,23 @@
+# hermes runtime files leaking into hermes-stack/ (they belong in ~/.hermes/)
+/SOUL.md
+/.update_check
+/cron/
+/logs/
+/memories/
+/sessions/
+
+# bonsai llama-server runtime log
+/bonsai.log
+
+# model binaries (GitHub rejects >100MB; download per README)
+/models/*.gguf
+
+# Claude Code local settings + scheduled tasks lock
+/.claude/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# misc runtime logs (anywhere in tree)
+*.log

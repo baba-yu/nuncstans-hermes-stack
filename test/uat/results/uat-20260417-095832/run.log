@@ -1,0 +1,67 @@
+
+========================================
+PREFLIGHT (UAT_RUN_ID=uat-20260417-095832)
+========================================
+[09:58:32] 2.2 Bonsai /v1/models ...
+[09:58:32] PASS: Bonsai alive with alias bonsai-8b
+[09:58:32] 2.2 Ollama /api/tags ...
+[09:58:32] PASS: Ollama serves glm-4.7-flash
+[09:58:32] PASS: Ollama serves openai/text-embedding-3-small alias
+[09:58:32] 2.2 Honcho /openapi.json ...
+[09:58:32] PASS: Honcho API responds 200
+[09:58:32] 2.3 Honcho container settings ...
+[09:58:33] PASS: EMBEDDING_PROVIDER = openrouter
+[09:58:33] PASS: OPENAI_COMPATIBLE_BASE_URL = http://host.docker.internal:11434/v1
+[09:58:33] PASS: VLLM_BASE_URL = http://host.docker.internal:8080/v1
+[09:58:33] PASS: DERIVER_PROVIDER = vllm
+[09:58:33] PASS: DERIVER_MODEL = bonsai-8b
+[09:58:33] PASS: DERIVER_REPR_BATCH = 1024
+[09:58:33] PASS: APP_MAX_EMBEDDING_TOKENS = 2048
+[09:58:33] PASS: VS_DIMENSIONS = 768
+[09:58:33] PASS: BACKUP_PROVIDER = null
+[09:58:33] 2.4 No BACKUP_* lines in config.toml ...
+[09:58:33] PASS: no BACKUP_* lines
+[09:58:33] 2.5 pgvector message_embeddings dim ...
+[09:58:33] PASS: message_embeddings.embedding = Vector(768)
+[09:58:34] PASS: hermes CLI installed: Hermes Agent v0.10.0 (2026.4.16)
+[09:58:34] PREFLIGHT: OK
+
+========================================
+S1 pass-through smoke (UAT_RUN_ID=uat-20260417-095832)
+========================================
+[09:58:34] created ws=uat-20260417-095832-s1 peer=alice ses=smoke
+[09:58:39] posted message, token_count=13
+[09:58:49] message_embeddings uat-20260417-095832-s1: 0 -> 1
+[09:58:49] PASS: embedding row written
+[09:58:49] PASS: Bonsai not hit (0 print_timing)
+[09:58:49] PASS: Ollama chat model not loaded
+[09:58:50] S1: OK
+
+========================================
+S2 Ollama direct chat (UAT_RUN_ID=uat-20260417-095832)
+========================================
+[09:58:56] response content: ping
+[09:58:56] response reasoning len: 198
+[09:58:56] PASS: Ollama generated output (content=4, reasoning=198 chars)
+[09:58:57] PASS: glm-4.7-flash loaded
+[09:58:57] PASS: Bonsai not hit (0 print_timing)
+[09:58:57] S2: OK
+
+========================================
+S3 embedding regression (middle-sized) (UAT_RUN_ID=uat-20260417-095832)
+========================================
+[09:59:02] posted token_count=1601
+[09:59:22] api error log hits: 0
+[09:59:22] message_embeddings in uat-20260417-095832-s3: 1
+[09:59:22] PASS: no embedding errors
+[09:59:22] PASS: embedding row written (1)
+[09:59:22] PASS: Bonsai not hit (expected embedding-only)
+[09:59:23] S3: OK
+
+========================================
+S4 deriver -> Bonsai observation (UAT_RUN_ID=uat-20260417-095832)
+========================================
+[09:59:23] posted token_count=1441
+[09:59:26] queue claimed at i=1
+[10:03:42] PASS: queue drained
+[10:03:42] S4 total elapsed: 259s
