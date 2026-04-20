@@ -217,11 +217,17 @@ git clone --depth 1 https://github.com/PrismML-Eng/llama.cpp bonsai-llama.cpp
 cd bonsai-llama.cpp
 export PATH=/usr/local/cuda/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-cmake -B build -DGGML_CUDA=ON
+cmake -B build \
+  -DGGML_CUDA=ON \
+  -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON \
+  -DCMAKE_INSTALL_RPATH='$ORIGIN' \
+  -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
 cmake --build build -j --config Release --target llama-server
 ```
 
 The CUDA build takes 5–10 minutes on a typical dev box; the heavy part is `ggml-cuda`'s CUDA kernels (there are many template instantiations per quantization type). The Blackwell `120a-real` architecture is added automatically by the fork's CMake when CUDA ≥ 12.8 is detected.
+
+**Note — the three extra `RPATH` flags are load-bearing, don't drop them.** Without them, CMake bakes the absolute build-tree path (e.g. `/home/you/hermes-stack/bonsai-llama.cpp/build/bin`) as `RUNPATH` into `llama-server` and every `lib*.so`. Rename or move the parent directory afterwards and `llama-server` dies at startup with `error while loading shared libraries: libmtmd.so.0: cannot open shared object file` even though the `.so` is sitting right next to the binary. This is a known upstream issue in `ggml-org/llama.cpp` ([#17193](https://github.com/ggml-org/llama.cpp/issues/17193), [#17190](https://github.com/ggml-org/llama.cpp/issues/17190), [#17950](https://github.com/ggml-org/llama.cpp/issues/17950)); upstream's merged fix ([PR #17214](https://github.com/ggml-org/llama.cpp/pull/17214)) only addresses the Docker-symlink side, not the absolute-RPATH side, so the `$ORIGIN` flags above are still required for local builds. The downstream consequence matters: if `llama-server` is silently down, Honcho keeps routing `dialectic` / `deriver` / `summary` / `dream` calls to `:8080`, each one stalls ~60 s in `tenacity` retries before giving up, and the whole Hermes loop feels hung. With `$ORIGIN` in `RUNPATH` the tree is relocatable and this class of failure goes away. Verify after build with `readelf -d build/bin/llama-server | grep RUNPATH` — you want `[$ORIGIN]`, not an absolute path.
 
 Download the GGUF (`Bonsai-8B.gguf`, ~1.1GB):
 
