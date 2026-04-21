@@ -286,21 +286,37 @@ ollama cp nomic-embed-text openai/text-embedding-3-small
 ollama list
 ```
 
-Expose Ollama on `0.0.0.0` so Docker containers can reach it:
+Configure the Ollama systemd service. Three environment variables matter here — all of them are load-bearing:
 
 ```bash
 sudo mkdir -p /etc/systemd/system/ollama.service.d
-echo -e '[Service]\nEnvironment="OLLAMA_HOST=0.0.0.0:11434"' \
-  | sudo tee /etc/systemd/system/ollama.service.d/override.conf
+sudo tee /etc/systemd/system/ollama.service.d/override.conf > /dev/null <<'EOF'
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0:11434"
+Environment="OLLAMA_GPU_OVERHEAD=8589934592"
+Environment="OLLAMA_CONTEXT_LENGTH=65536"
+EOF
 sudo systemctl daemon-reload
 sudo systemctl restart ollama
 
 curl -s http://localhost:11434/api/tags | head
 ```
 
+**Why each variable is there:**
+
+- `OLLAMA_HOST=0.0.0.0:11434` — Ollama defaults to `127.0.0.1`, which is unreachable from Docker containers. Honcho's embedding client (in the `honcho-api` / `honcho-deriver` containers) needs to hit Ollama through `host.docker.internal:11434`, and that only resolves when Ollama binds to all interfaces.
+
+- `OLLAMA_GPU_OVERHEAD=8589934592` (8 GiB in bytes) — **reserves VRAM for the Bonsai `llama-server` process.** Bonsai (`-ngl 99 -c 16384`) takes ~7.6 GiB of the RTX 5080's 16 GiB. Without this, Ollama's scheduler sees 16 GiB free on service start and happily loads a model that fills the whole card — then Bonsai either fails to start or thrashes. Setting 8 GiB here tells Ollama "pretend 8 GiB is already in use", so it plans its own allocations against the remaining ~8 GiB. Pair this with starting Bonsai **before** triggering any Ollama inference, so the two processes fit cleanly side by side.
+
+- `OLLAMA_CONTEXT_LENGTH=65536` — **prevents Ollama from silently truncating prompts at 4096 tokens.** Ollama's default `num_ctx` is 4096 regardless of what the GGUF declares (`qwen35moe.context_length = 262144` for `qwen3.6:35b`, for example). The OpenAI-compatible API has no `num_ctx` field, so Hermes (and any OpenAI-style client) can't pass it per-request — it has to be set as a service-wide default. When 4096 is used against a 13k-token prompt (realistic for Hermes once memory + dialectic context is folded in), Ollama truncates silently with only a log warning; the model then receives a mid-sentence-cut prompt and emits garbage (repeated paragraphs, `<|endoftext|>` token leakage, response times ballooning to 2+ minutes on `qwen3.6:35b`). 65,536 is the largest value that fits this hardware's 108 GiB RAM when Bonsai is also on the GPU, covering Hermes's realistic prompt sizes by roughly 5× with no swap. Raising it further (128k, 256k) overflows RAM and thrashes.
+
+You will know Ollama picked all three up when `systemctl show ollama -p Environment` echoes them back.
+
 ### Step 3. Bring up Honcho and point it at Bonsai / Ollama
 
 The honcho source is already populated — `honcho/` is a git submodule pinned to `baba-yu/nuncstans-honcho` (branch `dev`), so `git clone --recursive <hermes-stack>` (or `git submodule update --init --recursive` after a non-recursive clone) already has the tree in place. No manual `git clone` is needed here.
+
+**Note — why this fork carries a local OpenAI-backend patch.** Honcho's dialectic/deriver agents use `tool_choice = "any"` internally as an Anthropic-style synonym for `"required"`; the Anthropic and Gemini backends normalize it, but the upstream OpenAI backend forwards `"any"` unchanged. That works against vLLM (accepts `"any"` as a non-standard extension) and against legacy OpenAI endpoints, but **llama.cpp's OpenAI-compatible server — which is exactly what Bonsai runs here — rejects it** with `400 Invalid tool_choice: any`. Every Honcho call that touches tools (dialectic `/chat`, deriver observation extraction, dream consolidation) then dies after three tenacity retries, and from the Hermes side it looks identical to the 60-second stalls you'd see if `llama-server` weren't running at all — which is exactly how the original RPATH-induced outage masked this. The fork (`nuncstans-honcho`, branch `dev`) normalizes `"any"` → `"required"` in `src/llm/backends/openai.py` so the same code path works against all three server families (OpenAI, vLLM, llama.cpp) without any config switch. If you ever replace the submodule with plain upstream Honcho, re-apply that one-liner or dialectic will stop working against Bonsai without any obvious smoking gun in the logs.
 
 Upstream `.gitignore`s the live `config.toml`, so the submodule ships a committed `config.toml.bonsai-example` with all the knobs below already set. The one manual step is to materialize it as the live file the container reads:
 
