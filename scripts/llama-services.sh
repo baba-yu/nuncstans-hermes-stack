@@ -30,8 +30,10 @@ mkdir -p "$LOG_DIR"
 
 CHAT_LOG="$LOG_DIR/chat-server.log"
 EMBED_LOG="$LOG_DIR/embed-server.log"
+GK_LOG="$LOG_DIR/gatekeeper.log"
 CHAT_PID_FILE="$LOG_DIR/chat-server.pid"
 EMBED_PID_FILE="$LOG_DIR/embed-server.pid"
+GK_PID_FILE="$LOG_DIR/gatekeeper.pid"
 
 info()  { echo "[llama-services] $*"; }
 die()   { echo "[llama-services] ERROR: $*" >&2; exit 1; }
@@ -81,6 +83,32 @@ start_embed() {
     disown
     wait_health "http://127.0.0.1:8081/health" "embedding server" 60
     info "  embedding server ready (pid $(cat "$EMBED_PID_FILE"))"
+}
+
+start_gatekeeper() {
+    # Gatekeeper daemon classifies pending representation queue rows and
+    # promotes them to ready (or demotes non-literal / low-importance ones).
+    # Uses the chat server on :8080 as the classifier LLM (via the
+    # BONSAI_URL / BONSAI_MODEL env names it was originally wired for).
+    # See scripts/gatekeeper_daemon.py for the decision rules.
+    if [[ -n "$(get_live_pid "$GK_PID_FILE")" ]]; then
+        info "gatekeeper already running (pid $(cat "$GK_PID_FILE"))"
+        return 0
+    fi
+    info "starting gatekeeper daemon"
+    BONSAI_URL=http://localhost:8080 \
+    BONSAI_MODEL=qwen3.6-test \
+    HERMES_HOME="$ROOT" \
+    HONCHO_DIR="$ROOT/honcho" \
+    nohup python3 "$ROOT/scripts/gatekeeper_daemon.py" \
+        > "$GK_LOG" 2>&1 &
+    echo $! > "$GK_PID_FILE"
+    disown
+    sleep 2
+    if ! kill -0 "$(cat "$GK_PID_FILE")" 2>/dev/null; then
+        die "gatekeeper died immediately; see $GK_LOG"
+    fi
+    info "  gatekeeper running (pid $(cat "$GK_PID_FILE"))"
 }
 
 start_chat() {
@@ -139,9 +167,15 @@ cmd_start() {
     # and the chat server start triggers embedding-model ensure elsewhere.
     start_embed
     start_chat
+    # gatekeeper last: it calls the chat server, so chat must be healthy
+    # before the daemon's first poll fires.
+    start_gatekeeper
 }
 
 cmd_stop() {
+    # reverse order: stop the daemon first so it doesn't see a missing
+    # chat server mid-classification, then the servers themselves
+    stop_one "gatekeeper" "$GK_PID_FILE"
     stop_one "chat server" "$CHAT_PID_FILE"
     stop_one "embedding server" "$EMBED_PID_FILE"
 }
@@ -162,6 +196,13 @@ cmd_status() {
             printf "  %-5s  stopped  (no tracked pid)\n" "$label"
         fi
     done
+    # gatekeeper has no HTTP health endpoint; report process status only
+    gk_pid="$(get_live_pid "$GK_PID_FILE" || true)"
+    if [[ -n "$gk_pid" ]]; then
+        printf "  %-5s  pid %s  daemon    running   log %s\n" "gk" "$gk_pid" "$GK_LOG"
+    else
+        printf "  %-5s  stopped  (no tracked pid)\n" "gk"
+    fi
 }
 
 cmd_restart() { cmd_stop; cmd_start; }
@@ -171,7 +212,8 @@ cmd_logs() {
     case "$which" in
         chat)  tail -f "$CHAT_LOG" ;;
         embed) tail -f "$EMBED_LOG" ;;
-        *) die "unknown log target: $which (chat|embed)" ;;
+        gk)    tail -f "$GK_LOG" ;;
+        *) die "unknown log target: $which (chat|embed|gk)" ;;
     esac
 }
 
