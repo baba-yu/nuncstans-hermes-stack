@@ -27,7 +27,13 @@ ENV:
   HERMES_HOME            default ~/hermes-stack
   HONCHO_DIR             default $HERMES_HOME/honcho
   BONSAI_URL             default http://localhost:8080
-  BONSAI_MODEL           default bonsai-8b
+                         (env name is historical — any OpenAI-compatible
+                         server on this URL is accepted; today this fork
+                         points it at the shared qwen3.6 chat llama-server
+                         managed by scripts/llama-services.sh)
+  BONSAI_MODEL           default qwen3.6-test
+                         (must match the --alias the server was launched
+                         with; historically this was 'bonsai-8b')
   GK_POLL_INTERVAL_SEC   default 5
   GK_DELTA               default 0.20   (margin threshold on A−B)
   GK_TAU                 default 0.75   (logprob confidence floor)
@@ -56,7 +62,7 @@ from pathlib import Path
 HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / "hermes-stack"))
 HONCHO_DIR = Path(os.environ.get("HONCHO_DIR", HERMES_HOME / "honcho"))
 BONSAI_URL = os.environ.get("BONSAI_URL", "http://localhost:8080")
-BONSAI_MODEL = os.environ.get("BONSAI_MODEL", "bonsai-8b")
+BONSAI_MODEL = os.environ.get("BONSAI_MODEL", "qwen3.6-test")
 POLL_INTERVAL_SEC = int(os.environ.get("GK_POLL_INTERVAL_SEC", "5"))
 DELTA = float(os.environ.get("GK_DELTA", "0.20"))
 TAU = float(os.environ.get("GK_TAU", "0.75"))
