@@ -442,7 +442,125 @@ The 16 GiB GPU does not fit `qwen3.6:35b`. Realistic options on this box:
 2. Keep Bonsai, drop Hermes's main model to `gpt-oss:20b` at short ctx (barely fits alongside Bonsai).
 3. Accept hybrid quality / speed: Bonsai for Honcho memory (fast, on GPU), qwen3.6:35b for Hermes main chat (slow, on CPU, now with `think: false` so it at least produces output).
 
-### Sources cited
+## 13. Resolution (update, 2026-04-21)
+
+All six layers above now have a concrete resolution. The `bench-moe-offload`
+experiment (see `experiments/bench-moe-offload/report.md`) validated a
+single configuration that clears the whole stack of symptoms — **L6:
+expert-tensor offload with `--reasoning off`**, served by our local
+`llama-server` build against `unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL`.
+
+Measured on the 8-cell matrix (4 143 prompt + 800 max tokens, median of 3):
+
+| cell                               | wall s | decode tok/s | content non-empty | VRAM peak |
+|---                                 |  ---:  |      ---:    |         :---:     |    ---:   |
+| L1  CPU-only, thinking on          | 69.5   | 12.2         | no                | 5.1 GiB   |
+| L2  CPU-only, nothink              | 23.3   | 12.4         | yes               | 5.1 GiB   |
+| L3a partial (-ngl 30), thinking on | 70.3   | 12.1         | no                | 15.9 GiB  |
+| L4a partial (-ngl 30), nothink     | 23.5   | 11.7         | yes               | 15.9 GiB  |
+| L5  expert offload, thinking on    | 23.8   | 36.4         | no                | 7.5 GiB   |
+| **L6  expert offload, nothink**    | **5.5**| **35.9**     | **yes**           | **7.5 GiB**|
+
+L3b / L4b were gated out automatically — L3a / L4a already peaked at
+15.9 of 16 GiB, leaving no headroom to bump to `-ngl 35`. The gate logic
+in `run_all.sh` worked as designed.
+
+### Why L6 wins
+
+1. **Expert-tensor offload bypasses the 22 GiB weight wall.** By placing
+   attention and shared projections on the GPU while pushing the MoE
+   FFN expert tensors (`ffn_(up|down|gate)_exps`) to CPU, the chat model
+   fits in 7.5 GiB of VRAM even though its total weights are 22 GiB.
+   Because qwen3.6 is an A3B architecture (~3 B active parameters per
+   token), the CPU side only has to execute a 3 B-scale matmul per
+   token, not 36 B — the "nominally CPU" experts act like a tiny dense
+   model on CPU.
+2. **Attention on GPU lifts prompt eval 3×.** Prompt-eval rate is
+   57.8 tok/s (L5) / 46.8 tok/s (L6) versus 18 tok/s on any all-CPU
+   or layer-sequential configuration. On the 4 143-token Hermes turn
+   that's the difference between 80 s of prefill and 7 s.
+3. **`--reasoning off` recovers the entire completion budget.** L5
+   (same placement, thinking on) spent all 800 tokens on invisible
+   reasoning and produced empty `content`. L6 emits only ~193 user-facing
+   tokens at the same underlying rate, so wall time drops from 23.8 s
+   to 5.5 s. The `#20099` thinking-token leak is neutralised at the
+   server-config layer.
+4. **Layer-sequential partial offload at N=30 is strictly dominated.**
+   Same 12 tok/s decode as pure CPU while eating 16 GiB of VRAM. On
+   this hardware, if you can't fit the model end-to-end on GPU, moving
+   layers doesn't help — only moving *tensors within layers* (the
+   `-ot` path) breaks the bandwidth bottleneck.
+
+### Contention with Honcho deriver
+
+Single endpoint serving both Hermes chat and Honcho deriver — single
+`llama-server` process, both clients point at `:8080`:
+
+| cell | Hermes single | Hermes contended | Δ     | Honcho wall | Hermes content (contended) |
+|:----:|          ---: |              ---:| ---:  |         ---:| :---:                      |
+| L4a  | 23.5 s        | 46.5 s           | +23.0 | 55.4 s      | yes                        |
+| L6   |  5.5 s        | 11.6 s           |  +6.1 | 16.8 s      | yes                        |
+
+L6 under concurrent deriver load doubles to ~12 s — still inside an
+interactive window, and content stays non-empty. Since Honcho's deriver
+runs asynchronously post-message in production, pure concurrency hits
+are rare. This config replaces the two-endpoint (Bonsai + qwen) setup
+we had been fighting through the bottleneck investigation.
+
+### Stack after resolution
+
+```
+[stopped]  Bonsai llama-server            ← infrastructure kept, process down
+[stopped]  ollama serve                    ← no longer used, embedding moved to llama-server
+[persist]  embedding llama-server  :8081   ← nomic-embed-text aliased as
+                                              openai/text-embedding-3-small
+[persist]  chat  llama-server      :8080   ← qwen3.6 with L6 flags
+[running]  Honcho api / deriver             ← chat and embedding both point at local
+                                              llama-server; image rebuilt to bake in
+                                              the tool_choice=any→required patch
+[interactive] Hermes                        ← config.yaml points at :8080
+```
+
+Managed by `scripts/llama-services.sh` (start/stop/status/restart/logs).
+PIDs and logs land under `~/.local/state/hermes-stack/`.
+
+### What changed in the layer-by-layer analysis
+
+| # | Layer | Status as of 2026-04-21 |
+|---|---    |                      ---|
+| 1 | Bonsai RPATH            | Fixed + committed; Bonsai now starts cleanly, but no longer sits in the critical path. Kept as optional infrastructure. |
+| 2 | Ollama ctx truncation   | Fixed + committed; ollama is no longer in the chat critical path either, but the env var still protects any ollama-served model. |
+| 3 | Ollama VRAM reservation | Fixed + committed; obsoleted by the single-endpoint move — `OLLAMA_GPU_OVERHEAD` can be dropped once ollama is retired. |
+| 4 | Honcho `tool_choice`    | Fixed + committed. `prep.sh` now rebuilds the honcho image so the patch is actually in the running container, not just the submodule source. |
+| 5 | CPU decode ceiling      | Bypassed, not fixed. Expert-tensor offload keeps attention on GPU, so the CPU decode ceiling no longer dominates. |
+| 6 | qwen3 thinking-token leak | Worked around via `--reasoning off` at the llama-server level. Upstream bug still exists; we just don't trigger it. |
+
+### What remains unresolved (deliberately)
+
+- **#20003 full-prompt re-prefill** on qwen3 MoE. Still verified present
+  — every turn re-prefills the whole context. At L6's prompt-eval rate
+  of ~47 tok/s, a 4 k-token prompt costs ~85 ms that a healthy KV-cache
+  reuse would save. Small absolute hit; not worth fighting now. Fixable
+  upstream; `ik_llama.cpp` fork reportedly handles it better.
+- **Honcho `tool_choice` patch not upstreamed.** By explicit user call —
+  the local fork carries it.
+
+### The architectural pivot the benchmark forced
+
+The original hermes-stack design split Bonsai (memory, GPU) and qwen
+(chat, whatever fits) across two endpoints. The rationale was that
+Bonsai's memory-specialised training is qualitatively different from a
+general chat model and shouldn't be conflated. That's a defensible
+design; the operational cost (two processes, two configs, two versions
+of the tool_choice bug, VRAM partitioning dance) is what the
+investigation kept bumping into. Once L6 showed a single endpoint can
+serve both roles at interactive latency with full content, the cost of
+keeping the split could no longer be justified for this hardware / this
+user. The split is not *wrong* — it's right for a different shape of
+deployment (multi-user, larger GPU, cloud hybrid). On the current box
+it was over-engineered.
+
+## Sources cited
 
 - [ggml-org/llama.cpp#17193](https://github.com/ggml-org/llama.cpp/issues/17193), [#17190](https://github.com/ggml-org/llama.cpp/issues/17190), [#17950](https://github.com/ggml-org/llama.cpp/issues/17950) — libmtmd.so.0 RPATH issue
 - [ggml-org/llama.cpp#17214](https://github.com/ggml-org/llama.cpp/pull/17214) — Docker-symlink fix (does not cover our case)

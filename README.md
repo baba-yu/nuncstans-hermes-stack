@@ -2,11 +2,53 @@
 
 A recipe for running NousResearch's **Hermes Agent** fully locally.
 
+Target host: **WSL2 Ubuntu**. It is possible to run directly on Windows, but the Hermes installer and Honcho's docker-compose assume Linux, so staying inside WSL2 avoids a lot of paper cuts.
+
+---
+
+## 🎯 Current recommended path (updated 2026-04-21)
+
+After the investigation in `experiments/bottleneck.md` and the benchmark in `experiments/bench-moe-offload/report.md`, the stack has collapsed to a **single-engine, two-process setup** that hits ~5.5 s per interactive Hermes turn on a 16 GiB RTX 5080:
+
+| Process | Port | Model | Role |
+|---|---|---|---|
+| `llama-server` (chat) | `:8080` | `unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL` | Hermes main chat **and** Honcho deriver / dialectic / summary / dream. Expert-tensor CPU offload (`-ot "ffn_(up\|down\|gate)_exps=CPU"`), reasoning off, `-c 65536`, KV q8_0. ~7.5 GiB VRAM. |
+| `llama-server` (embedding) | `:8081` | nomic-embed-text (ollama's GGUF blob) | Honcho embeddings. 261 MiB, ~0.5 GiB VRAM. Aliased as `openai/text-embedding-3-small` so Honcho's hardcoded name resolves locally. |
+
+Managed by `scripts/llama-services.sh` (`start` / `stop` / `status` / `restart` / `logs`). Ollama is **no longer required**. Bonsai-8B is **no longer required**; its build and config are still in the repo for reference but not in the runtime path.
+
+### Why a single endpoint
+
+- Expert-tensor CPU offload for qwen3.6 A3B gives ~36 tok/s decode and ~47 tok/s prompt-eval with ~7.5 GiB VRAM — so one model fits comfortably alongside a small embedding server on a 16 GiB card.
+- `--reasoning off` on the llama-server side eliminates qwen3's invisible thinking-token leak ([llama.cpp#20099](https://github.com/ggml-org/llama.cpp/issues/20099)) that was silently consuming the entire completion budget.
+- Honcho's deriver runs async post-message, so concurrent Hermes+deriver load is rare; when it does hit, L6 degrades to ~11.6 s (still interactive) while both responses stay valid.
+
+See `experiments/bench-moe-offload/report.md` for the 8-cell matrix of (placement × reasoning) measurements that led to this config.
+
+### Quick start (single-endpoint path)
+
+```bash
+# One-time: build llama-server with $ORIGIN rpath (see Step 1 below)
+# and make sure Honcho's image has the tool_choice=any→required patch
+# baked in (see honcho/src/llm/backends/openai.py, shipped in this fork).
+
+# Daily:
+./scripts/llama-services.sh start     # chat + embedding
+docker compose -f honcho/docker-compose.yml up -d
+hermes                                 # interactive agent
+```
+
+### The legacy two-endpoint path (below) is kept for reference
+
+The rest of this README describes the original architecture — Bonsai-8B on `llama-server` for Honcho's memory modules plus Ollama serving the chat model — that we ran until the benchmark showed a single endpoint is both faster and operationally simpler on this hardware class. That path still works; use it if you want Bonsai-specific memory-consolidation quality, or if you move to a multi-GPU / larger-VRAM host where you can afford two model slots.
+
+---
+
+## Legacy architecture (two-endpoint)
+
 - The **Honcho** memory backend's LLM calls (deriver / dialectic / summary / dream) are served by **Bonsai-8B** through `llama-server`, pinned to CPU and regular RAM.
 - The main chat inference runs on **Ollama** with a heavy model, holding the GPU and VRAM.
 - Embeddings also go through Ollama with a small embedding model, so no cloud API key is required anywhere.
-
-Target host: **WSL2 Ubuntu**. It is possible to run directly on Windows, but the Hermes installer and Honcho's docker-compose assume Linux, so staying inside WSL2 avoids a lot of paper cuts.
 
 ## Architecture
 
