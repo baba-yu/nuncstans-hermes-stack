@@ -72,7 +72,7 @@ start_embed() {
     export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}"
     nohup "$LLAMA_BUILD/llama-server" \
         -m "$EMBED_BLOB" \
-        --host 127.0.0.1 --port 8081 \
+        --host 0.0.0.0 --port 8081 \
         --embeddings \
         --alias openai/text-embedding-3-small \
         -ngl 99 \
@@ -95,7 +95,7 @@ start_chat() {
     export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}"
     nohup "$LLAMA_BUILD/llama-server" \
         -hf "$HF_CHAT_SPEC" \
-        --host 127.0.0.1 --port 8080 \
+        --host 0.0.0.0 --port 8080 \
         -c 65536 \
         -fa on \
         -ctk q8_0 -ctv q8_0 \
