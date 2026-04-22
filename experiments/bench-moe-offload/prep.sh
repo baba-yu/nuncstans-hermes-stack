@@ -107,7 +107,16 @@ info "embedding server OK ($probe_result)"
 
 # ---------- 4. rewrite honcho config.toml ----------
 info "4/8 rewriting Honcho config.toml"
-cp "$HONCHO_CONFIG" "$HONCHO_CONFIG.pre-bench"
+# Preserve a known-good baseline on first run; on re-runs restore from it
+# before rewriting so the regex transforms are deterministic regardless of
+# any half-finished state left by a prior aborted prep.
+if [[ -f "$HONCHO_CONFIG.pre-bench" ]]; then
+    cp "$HONCHO_CONFIG.pre-bench" "$HONCHO_CONFIG"
+    info "  restored from pre-bench backup"
+else
+    cp "$HONCHO_CONFIG" "$HONCHO_CONFIG.pre-bench"
+    info "  saved pre-bench backup"
+fi
 
 python3 - "$HONCHO_CONFIG" <<'PY'
 import re, sys
@@ -149,142 +158,45 @@ sed -i 's|^  base_url: http://[^ ]*|  base_url: http://localhost:8080/v1|' "$HER
 grep -q 'qwen3.6-test' "$HERMES_CONFIG" || die "hermes config did not get model rename"
 grep -q ':8080/v1' "$HERMES_CONFIG" || die "hermes config did not get base_url change"
 
-# ---------- 6. recreate honcho containers ----------
-info "6/8 recreating honcho-api and honcho-deriver with new config"
+# ---------- 6. rebuild and recreate honcho containers ----------
+info "6/8 rebuilding honcho image (ensures local tool_choice patch is baked in)"
 cd "$ROOT/honcho"
+# build only api image (deriver shares it in this compose file) with a clean
+# cache miss on the src copy layer so our committed patch takes effect
+docker compose build --quiet api deriver 2>&1 | tail -5 || die "image build failed"
+info "6/8 recreating honcho-api and honcho-deriver with new image"
 docker compose up -d --force-recreate --no-deps api deriver >/dev/null
 cd - >/dev/null
-wait_healthy "http://127.0.0.1:8000/v3/workspaces" "honcho-api"
+wait_healthy "http://127.0.0.1:8000/docs" "honcho-api"
 
-# ---------- 7. capture real deriver request ----------
-info "7/8 capturing real Honcho deriver request via transparent proxy"
-CAPTURE_OUT="/tmp/honcho_captured.jsonl"
-: > "$CAPTURE_OUT"
-
-# proxy: listen :8090, forward to :8080 (no test server yet — this only captures
-# the request to be sent; upstream 503 is fine since we drop the response)
-# we need SOMETHING at :8080 for the proxy's forward to not error. Start a
-# placeholder: a minimal llama-server with the smallest context just to complete
-# forwarding, OR use a simpler "always 200" stub. Simpler: run a stub that
-# returns a mocked OpenAI response so deriver doesn't hang.
-python3 - <<'STUB' &
-import http.server, json, socketserver, threading
-class Stub(http.server.BaseHTTPRequestHandler):
-    def do_POST(self):
-        length = int(self.headers.get('content-length', 0))
-        _ = self.rfile.read(length)
-        self.send_response(200)
-        self.send_header('content-type', 'application/json')
-        self.end_headers()
-        resp = {"id":"stub","object":"chat.completion","choices":[{"index":0,
-                "message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
-                "usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
-        self.wfile.write(json.dumps(resp).encode())
-    def log_message(self, *a, **k): pass
-with socketserver.ThreadingTCPServer(("127.0.0.1", 8080), Stub) as httpd:
-    httpd.serve_forever()
-STUB
-STUB_PID=$!
-sleep 1
-
-# start proxy in background
-python3 "$BENCH_DIR/scripts/capture_proxy.py" > "$LOG_DIR/capture_proxy.log" 2>&1 &
-PROXY_PID=$!
-disown
-sleep 2
-
-# temporarily point honcho deriver at proxy (:8090) for just this capture
-python3 - <<'SWITCH'
-import re
-path = "/home/baba-y/nuncstans-hermes-stack/honcho/config.toml"
-text = open(path).read()
-# switch deriver base_url to :8090 for this capture
-text = re.sub(
-    r'(\[deriver\.model_config\.overrides\][^\[]*?base_url\s*=\s*")http://[^"]*:8080/v1(")',
-    r'\1http://host.docker.internal:8090/v1\2',
-    text, flags=re.DOTALL,
-)
-open(path, 'w').write(text)
-SWITCH
-
-cd "$ROOT/honcho"
-docker compose up -d --force-recreate --no-deps deriver >/dev/null
-cd - >/dev/null
-sleep 3
-
-# trigger a message so deriver actually fires
-info "7/8 triggering deriver by posting messages to Honcho"
-SESSION_ID="bench-prep-$(date +%s)"
-for content in "Bonsaiビルドに$ORIGINを焼き込んだ、動作確認済。" \
-               "Ollamaのcontext lengthを65kに上げた、OLLAMA_GPU_OVERHEADも設定済。"; do
-    curl -sS --max-time 10 "http://127.0.0.1:8000/v3/workspaces/octoball/sessions/$SESSION_ID/messages" \
-        -H 'content-type: application/json' \
-        -d "$(python3 -c "import json,sys; print(json.dumps({'messages':[{'peer_id':'Yuki','content':sys.argv[1]}]}))" "$content")" \
-        >/dev/null || info "(warning) message post failed, continuing"
-done
-
-# wait up to 60s for deriver to emit at least one captured request
-deadline=$(( $(date +%s) + 60 ))
-while :; do
-    if [[ -s "$CAPTURE_OUT" ]]; then
-        count=$(wc -l < "$CAPTURE_OUT")
-        info "captured $count request(s)"
-        if [[ $count -ge 1 ]]; then break; fi
+# verify patch is present in the running containers
+for svc in honcho-api-1 honcho-deriver-1; do
+    if ! docker exec "$svc" grep -q 'if tool_choice == "any"' /app/src/llm/backends/openai.py; then
+        die "$svc does not have the tool_choice patch; image rebuild failed silently"
     fi
-    (( $(date +%s) >= deadline )) && break
-    sleep 2
 done
+info "  tool_choice patch verified in both containers"
 
-# pick the largest captured body (most representative of deriver's real shape)
-if [[ -s "$CAPTURE_OUT" ]]; then
-    python3 - "$CAPTURE_OUT" "$BENCH_DIR/prompts/honcho_deriver.json" <<'PICK'
-import json, sys
-in_path, out_path = sys.argv[1], sys.argv[2]
-best = None; best_size = -1
-for line in open(in_path):
-    rec = json.loads(line)
-    if rec.get("kind") != "chat_completions": continue
-    body = rec.get("body") or {}
-    size = len(json.dumps(body))
-    if size > best_size:
-        best_size = size; best = body
-if best is None:
-    sys.exit("no chat_completions captured")
-# rename model to bench target
-best["model"] = "qwen3.6-test"
-best["stream"] = False
-# keep max_tokens as deriver sent it; bench will reuse as-is
-open(out_path, "w").write(json.dumps(best, ensure_ascii=False))
-print(f"wrote {out_path}, prompt_size_chars={best_size}", file=sys.stderr)
-PICK
-else
-    info "WARN: no deriver request captured; contention bench will use a fabricated fallback"
-    # write a minimal fallback
-    cat > "$BENCH_DIR/prompts/honcho_deriver.json" <<'FB'
-{"model":"qwen3.6-test","messages":[{"role":"system","content":"You are a helpful observation-extraction agent. Extract key facts from the conversation as structured observations."},{"role":"user","content":"Conversation pair:\nUser: Hermesの遅延調査を進めた、bonsaiのRPATHとtool_choiceの問題を修正した。\nAssistant: 修正内容を記録しました。"}],"stream":false,"max_tokens":400}
-FB
-fi
-
-# ---------- restore honcho config, kill stub+proxy, recreate deriver ----------
-kill $PROXY_PID 2>/dev/null || true
-kill $STUB_PID 2>/dev/null || true
-sleep 1
-
-python3 - <<'RESTORE'
-import re
-path = "/home/baba-y/nuncstans-hermes-stack/honcho/config.toml"
-text = open(path).read()
-text = re.sub(
-    r'(\[deriver\.model_config\.overrides\][^\[]*?base_url\s*=\s*")http://[^"]*:8090/v1(")',
-    r'\1http://host.docker.internal:8080/v1\2',
-    text, flags=re.DOTALL,
-)
-open(path, 'w').write(text)
-RESTORE
-
-cd "$ROOT/honcho"
-docker compose up -d --force-recreate --no-deps deriver >/dev/null
-cd - >/dev/null
+# ---------- 7. verify committed deriver prompt ----------
+# The representative Honcho-deriver-shape request used by the contention
+# bench is committed at prompts/honcho_deriver.json. We tried live-capturing
+# a real deriver request via a transparent proxy earlier, but the dance
+# (stub + proxy + config swap + docker recreate + wait-for-fire) was
+# brittle enough that it repeatedly dominated prep time without adding
+# measurement value. The committed payload mirrors src/deriver/prompts.py
+# minimal_deriver_prompt + the create_observations tool schema, sized to
+# ~1-2k tokens — representative of what a real deriver turn sends.
+info "7/8 verifying prompts/honcho_deriver.json"
+[[ -s "$BENCH_DIR/prompts/honcho_deriver.json" ]] \
+    || die "prompts/honcho_deriver.json missing or empty"
+python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert d.get('model')=='qwen3.6-test', 'model not set to qwen3.6-test'
+assert isinstance(d.get('messages'), list) and len(d['messages'])>=2, 'messages array malformed'
+assert isinstance(d.get('tools'), list) and len(d['tools'])>=1, 'tools array missing'
+print(f\"  honcho_deriver.json OK: {len(d['messages'])} msgs, {len(d['tools'])} tool(s), max_tokens={d.get('max_tokens')}\")
+" "$BENCH_DIR/prompts/honcho_deriver.json" || die "honcho_deriver.json validation failed"
 
 # ---------- 8. final verification ----------
 info "8/8 final verification"

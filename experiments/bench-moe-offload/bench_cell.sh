@@ -274,10 +274,19 @@ if contention_hermes.exists():
     if hsum is not None and csum is not None:
         report["contention"]["hermes_delta_s"] = csum - hsum
 
-metrics_path = results_dir / ("single_metrics.json" if "contention" not in report
-                              else "metrics.json")
-open(metrics_path, "w").write(json.dumps(report, indent=2, ensure_ascii=False))
-print(f"[py] wrote {metrics_path}", file=sys.stderr)
+# Always emit single_metrics.json (single-load + resources only) so
+# run_all.sh has a stable path for the L3b/L4b gate. If contention ran,
+# also emit metrics.json as the complete record (single + contention).
+single_only = {k: v for k, v in report.items() if k != "contention"}
+open(results_dir / "single_metrics.json", "w").write(
+    json.dumps(single_only, indent=2, ensure_ascii=False)
+)
+print(f"[py] wrote {results_dir / 'single_metrics.json'}", file=sys.stderr)
+if "contention" in report:
+    open(results_dir / "metrics.json", "w").write(
+        json.dumps(report, indent=2, ensure_ascii=False)
+    )
+    print(f"[py] wrote {results_dir / 'metrics.json'}", file=sys.stderr)
 PY
 
 info "done. results in $RESULTS/"
