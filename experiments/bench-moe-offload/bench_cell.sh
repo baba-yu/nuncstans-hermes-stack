@@ -24,7 +24,13 @@ CELL="${1:?cell id required: L1|L2|L3a|L3b|L4a|L4b|L5|L6}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BENCH_DIR="$ROOT/experiments/bench-moe-offload"
 LLAMA_BUILD="$ROOT/bonsai-llama.cpp/build/bin"
-CHAT_BLOB="/usr/share/ollama/.ollama/models/blobs/sha256-f5ee307a2982106a6eb82b62b2c00b575c9072145a759ae4660378acda8dcf2d"
+# Use unsloth's Q4_K_XL GGUF via -hf rather than ollama's stored blob.
+# Ollama ships the qwen3.6:35b blob with a 3-element
+# qwen35moe.rope.dimension_sections, which our llama.cpp fork rejects
+# (expects 4). Unsloth's UD-Q4_K_XL uses the 4-element layout the build
+# understands. llama.cpp caches the download at ~/.cache/llama.cpp so
+# subsequent cell invocations reuse the same file.
+HF_CHAT_SPEC="unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL"
 RESULTS="$BENCH_DIR/results/$CELL"
 HERMES_PROMPT="$BENCH_DIR/prompts/hermes_4k.json"
 HONCHO_PROMPT="$BENCH_DIR/prompts/honcho_deriver.json"
@@ -33,7 +39,7 @@ mkdir -p "$RESULTS"
 
 # ---------- common flags ----------
 COMMON_FLAGS=(
-    -m "$CHAT_BLOB"
+    -hf "$HF_CHAT_SPEC"
     --host 127.0.0.1 --port 8080
     -c 65536
     -fa on
@@ -61,7 +67,6 @@ die()   { echo "[$CELL] ERROR: $*" >&2; exit 1; }
 # ---------- preflight ----------
 info "preflight"
 [[ -x "$LLAMA_BUILD/llama-server" ]] || die "llama-server binary missing"
-[[ -r "$CHAT_BLOB" ]] || die "chat blob missing"
 [[ -f "$HERMES_PROMPT" ]] || die "prompts/hermes_4k.json missing (run prep.sh)"
 if [[ "$CELL" == "L4a" || "$CELL" == "L6" ]]; then
     [[ -f "$HONCHO_PROMPT" ]] || die "prompts/honcho_deriver.json missing (run prep.sh)"
@@ -93,8 +98,8 @@ SAMPLER_PID=$!
 sleep 1
 
 # ---------- wait for health ----------
-info "waiting for /health (up to 120s)"
-deadline=$(( $(date +%s) + 120 ))
+info "waiting for /health (up to 600s; first cell may download ~20 GiB)"
+deadline=$(( $(date +%s) + 600 ))
 while :; do
     if curl -sfS --max-time 2 http://127.0.0.1:8080/health >/dev/null 2>&1; then
         info "server healthy"
