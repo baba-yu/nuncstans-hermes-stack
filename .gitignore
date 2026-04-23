@@ -21,3 +21,6 @@ __pycache__/
 
 # misc runtime logs (anywhere in tree)
 *.log
+
+# Unrelated track
+/tmp/
