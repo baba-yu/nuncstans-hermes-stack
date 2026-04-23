@@ -108,6 +108,50 @@ flowchart LR
 
 The two-endpoint design (Bonsai + Ollama) that this replaces is archived in `experiments/bonsai-archive.md`.
 
+### Persistent runtime assets
+
+What keeps the stack running between reboots. If you're coming back to this repo after a break and wondering "which of these am I actually supposed to start?", read this table top-to-bottom. Per-process flags and config-file contents are documented in the Setup section; this is an inventory, not a reference.
+
+| Asset | Path | Purpose | Started by |
+|---|---|---|---|
+| Chat `llama-server` | `bonsai-llama.cpp/build/bin/llama-server` serving `unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL` on `:8080` | Hermes main chat **and** Honcho memory loops (dialectic / deriver / summary / dream) | `./scripts/llama-services.sh start` |
+| Embedding `llama-server` | same binary, `-m` against the nomic-embed-text GGUF, on `:8081` | Honcho embeddings (aliased as `openai/text-embedding-3-small`) | `./scripts/llama-services.sh start` |
+| Honcho stack | `honcho/docker-compose.yml` — api + deriver + pgvector + redis | Memory store + extraction pipeline | `cd honcho && docker compose up -d` |
+| Gatekeeper daemon | `scripts/gatekeeper_daemon.py` | Classifies pending representation rows → ready / demoted, keeps trivia out of the observation store before the deriver picks them up. Uses the chat `:8080` as its classifier LLM (`GK_LLM_URL` / `GK_LLM_MODEL`). | Started by `./scripts/llama-services.sh start` as the third service (after chat + embed) |
+| Sleep daemon (optional) | `scripts/sleep_daemon.py` | Fires Honcho's Dream consolidation agent on idle / pending-queue / token-count triggers. Not required for correctness; leave off until observation count makes consolidation worthwhile. See `experiments/memory-consolidation.md`. | Optional systemd user service; not part of `llama-services.sh` |
+| Hermes Agent | `~/.hermes/config.yaml` + `~/.hermes/honcho.json` | User-facing CLI. Points main model at `:8080`, memory at `:8000` (Honcho). | `hermes` |
+| Logs + PIDs | `~/.local/state/hermes-stack/{chat,embed,gatekeeper}-{server,}.{log,pid}` | Per-process supervisor state for `llama-services.sh`. Tail via `./scripts/llama-services.sh logs {chat\|embed\|gk}`. | Written by `llama-services.sh` |
+
+#### Hermes plugin knobs worth calling out (`~/.hermes/honcho.json`)
+
+The Honcho plugin has two settings that turn a working-but-slow install into a comfortable one. Both live in `~/.hermes/honcho.json`, which is user-local state (not tracked in this repo). See `experiments/save-point-pivot.md` for the full derivation.
+
+- `"recallMode": "tools"` — hide Honcho's per-turn dialectic auto-inject and expose the memory tools (`search_memory`, `get_observation_context`, …) instead. The chat model calls them on demand, so turns that don't need recall skip the 60 s dialectic stall entirely. With the default `"hybrid"`, every single turn — including `hello` — pays one dialectic LLM call. Think of it as switching from per-frame memory rendering to a save-point: writes still fire asynchronously on every user message, reads only fire when the model actively asks.
+- `"initOnSessionStart": true` — force the plugin to call `workspaces.sessions.create` at chat start instead of deferring it to the first tool call. Required whenever `recallMode: "tools"` is used, because a conversation that doesn't trigger a tool call otherwise never creates the session, and all the `messages.create` calls silently fail against the missing session id. Every message you send gets dropped; across-session memory silently doesn't work.
+
+A minimal `~/.hermes/honcho.json` that matches this stack:
+
+```json
+{
+  "baseUrl": "http://localhost:8000",
+  "hosts": {
+    "hermes": {
+      "enabled": true,
+      "aiPeer": "hermes",
+      "peerName": "you",
+      "workspace": "hermes",
+      "observationMode": "directional",
+      "writeFrequency": "async",
+      "recallMode": "tools",
+      "dialecticCadence": 3,
+      "sessionStrategy": "per-session",
+      "saveMessages": true,
+      "initOnSessionStart": true
+    }
+  }
+}
+```
+
 ## Setup
 
 ### Prerequisites
@@ -467,7 +511,7 @@ hermes memory status   # expect Provider: honcho / Plugin: installed / Status: a
 
 **Non-interactive path.** If you want to skip the wizard entirely, the cleanest approach is to run the wizard once to generate a known-good `~/.hermes/honcho.json`, then commit that file as your template and copy it into place on new machines. The 11 wizard answers map to a JSON shape that covers `baseUrl` plus per-host `aiPeer` / `peerName` / `workspace` plus the observation / write-frequency / recall / cadence / session-strategy settings, and the exact key names are hermes-version-dependent.
 
-A bare-bones starter `honcho.json` covering just the connection + peer/workspace identity (wizard will fill the rest with defaults on first use):
+A bare-bones starter `honcho.json` covering the connection + peer/workspace identity + the two knobs that make this stack comfortable (see [Persistent runtime assets](#persistent-runtime-assets) for why these two matter):
 
 ```bash
 cat > "$HOME/.hermes/honcho.json" <<'JSON'
@@ -478,7 +522,9 @@ cat > "$HOME/.hermes/honcho.json" <<'JSON'
       "enabled": true,
       "aiPeer": "hermes",
       "peerName": "you",
-      "workspace": "hermes"
+      "workspace": "hermes",
+      "recallMode": "tools",
+      "initOnSessionStart": true
     }
   }
 }
