@@ -1271,7 +1271,7 @@ def _user_choice_summary(plan: PlannedChanges) -> dict[str, Any]:
     }
 
 
-def cmd_switch(*, dry_run: bool) -> None:
+def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
     _print_current_state()
 
     doc = read_honcho_toml()
@@ -1288,7 +1288,16 @@ def cmd_switch(*, dry_run: bool) -> None:
         if swap_llama:
             _pick_llama_model(plan, llama_now)
 
-        _pick_honcho_embed(plan, e_url, e_model, caps_now["embedding.VECTOR_DIMENSIONS"])
+        if with_embed:
+            _pick_honcho_embed(plan, e_url, e_model, caps_now["embedding.VECTOR_DIMENSIONS"])
+        else:
+            cprint(
+                "info",
+                "skipping Honcho embed axis (pass --with-embed to include). "
+                "Current: {model} @ {url} (dim={dim})".format(
+                    model=e_model, url=e_url, dim=caps_now["embedding.VECTOR_DIMENSIONS"]
+                ),
+            )
         _pick_hermes(plan, h_url, h_model)
     except KeyboardInterrupt:
         cprint("warn", "cancelled during prompts; no changes made")
@@ -1459,6 +1468,10 @@ def main() -> None:
     )
     ap.add_argument("--dry-run", action="store_true",
                     help="compute and print diffs, skip all writes and restarts")
+    ap.add_argument("--with-embed", action="store_true",
+                    help="also prompt for the Honcho embedding axis (default: skipped — "
+                         "changing embed dim requires a destructive pgvector migration, "
+                         "so it is opt-in)")
     ap.add_argument("--rollback", action="store_true",
                     help="restore from the most recent snapshot")
     ap.add_argument("--restore", metavar="SNAPSHOT_ID",
@@ -1483,7 +1496,7 @@ def main() -> None:
         elif args.restore:
             cmd_restore(args.restore)
         else:
-            cmd_switch(dry_run=args.dry_run)
+            cmd_switch(dry_run=args.dry_run, with_embed=args.with_embed)
     except FatalError as e:
         cprint("err", str(e))
         sys.exit(2)
