@@ -856,10 +856,18 @@ def update_hermes_config(
 
 
 def restart_honcho_compose(*, dry_run: bool) -> subprocess.CompletedProcess[str] | None:
-    cmd = [
-        "docker", "compose", "-f", str(HONCHO_COMPOSE),
-        "up", "-d", "--force-recreate", "api", "deriver",
-    ]
+    # Use --no-deps so database/redis are not recreated (only api/deriver
+    # need to re-read config.toml). Also pass the override file explicitly:
+    # honcho/docker-compose.override.yml does `ports: !reset []` for
+    # database/redis so they do not fight llm-postgres / llm-redis on the
+    # host. Compose auto-merges override only when no -f is passed; once we
+    # specify -f we have to list both files ourselves.
+    override = HONCHO_COMPOSE.parent / "docker-compose.override.yml"
+    f_args: list[str] = ["-f", str(HONCHO_COMPOSE)]
+    if override.exists():
+        f_args += ["-f", str(override)]
+    cmd = ["docker", "compose", *f_args, "up", "-d",
+           "--force-recreate", "--no-deps", "api", "deriver"]
     cprint("step", f"restart honcho: {' '.join(cmd)}")
     if dry_run:
         return None
@@ -1348,8 +1356,8 @@ def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
             cprint("ok", f"wrote {LLAMA_CONF}")
         if plan.hermes:
             add_to_catalog = questionary.confirm(
-                "このモデルを provider カタログにも追加する? "
-                "(yes で `hermes model` のピッカーにも出るようになります)",
+                "also add this model to the provider catalog? "
+                "(yes = it will also appear in `hermes model`'s picker)",
                 default=True,
             ).ask()
             update_hermes_config(
@@ -1366,9 +1374,12 @@ def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
             if do_restart:
                 r = restart_llama(dry_run=False)
                 if r is not None and r.returncode != 0:
+                    err_text = (r.stderr or r.stdout).strip()
+                    cprint("err", f"llama-services rc={r.returncode}:")
+                    for line in err_text.splitlines()[-20:]:
+                        sys.stderr.write(f"    {line}\n")
                     errors.append(
-                        f"llama-services restart rc={r.returncode}: "
-                        f"{(r.stderr or r.stdout).strip()[:500]}"
+                        f"llama-services restart rc={r.returncode}: {err_text[:500]}"
                     )
                     raise FatalError("llama-services restart failed")
         if plan.needs_honcho_restart():
@@ -1378,10 +1389,11 @@ def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
             if do_restart:
                 r = restart_honcho_compose(dry_run=False)
                 if r is not None and r.returncode != 0:
-                    errors.append(
-                        f"compose up rc={r.returncode}: "
-                        f"{(r.stderr or r.stdout).strip()[:500]}"
-                    )
+                    err_text = (r.stderr or r.stdout).strip()
+                    cprint("err", f"compose up rc={r.returncode}:")
+                    for line in err_text.splitlines()[-20:]:
+                        sys.stderr.write(f"    {line}\n")
+                    errors.append(f"compose up rc={r.returncode}: {err_text[:500]}")
                     raise FatalError("docker compose restart failed")
 
         finalize_snapshot(snap, "applied", errors)
