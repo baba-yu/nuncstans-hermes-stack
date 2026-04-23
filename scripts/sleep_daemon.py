@@ -10,11 +10,12 @@ seconds and triggers a "nap" (dream / memory consolidation) when:
 When a nap starts, the daemon:
   1. Detects the chat model Hermes is currently using (from
      ~/.hermes/config.yaml, falling back to Ollama /api/ps). This is logged
-     for operator visibility only — dream itself runs on Bonsai-8B (the
-     Neuromancer-derivative memory model wired in honcho/config.toml),
-     NOT on the chat model. A general chat model hallucinates facts during
-     the dream tool-loop; Bonsai stays disciplined. Keeping the two models
-     separate also means dream never steals GPU from live chat turns.
+     for operator visibility only — the actual dream model is whatever
+     honcho/config.toml's [dream.deduction_model_config] / [dream.induction_model_config]
+     point at. In the current single-endpoint stack that's the shared
+     qwen3.6 chat llama-server on :8080. Earlier two-endpoint deployments
+     pointed dream at a separate memory-specialised model (Bonsai-8B) on
+     a different port; that split is archived in experiments/bonsai-archive.md.
   2. Injects an English "system" message into the active Honcho session so
      the user sees the notification the next time they look at Hermes.
   3. Enqueues the dream via the deriver container.
@@ -441,8 +442,9 @@ def loop() -> None:
     try:
         target = detect_inference_target()
         log.info(
-            "detected Hermes chat target: %s (dream itself runs on Bonsai per "
-            "config.toml)", target.key()
+            "detected Hermes chat target: %s (dream model is whatever "
+            "honcho/config.toml [dream.*_model_config] points at)",
+            target.key(),
         )
         state["last_chat_target"] = target.key()
     except Exception as e:

@@ -2,10 +2,14 @@
 """gatekeeper_daemon: async classifier that moves queue rows out of 'pending'.
 
 Runs alongside the Hermes runtime. Polls the queue for new representation
-rows and calls Bonsai to classify each one against the A (literal
+rows and calls the classifier LLM to score each one against the A (literal
 self-reference) / B (non-literal framing) hypotheses, plus importance and
 correction_of_prior. Uses JSON-schema-constrained output with per-token
 logprobs to derive a separate confidence signal.
+
+The classifier endpoint is an OpenAI-compatible server (today the shared
+qwen3.6 chat llama-server on :8080 managed by scripts/llama-services.sh;
+historically this was a separate Bonsai-8B instance on the same port).
 
 Decision rules (calibrated from scripts/gatekeeper_eval/):
   A_score − B_score ≥ DELTA    → status='ready'    (deriver picks it up)
@@ -26,14 +30,15 @@ it also ignores any task_type other than 'representation'.
 ENV:
   HERMES_HOME            default ~/hermes-stack
   HONCHO_DIR             default $HERMES_HOME/honcho
-  BONSAI_URL             default http://localhost:8080
-                         (env name is historical — any OpenAI-compatible
-                         server on this URL is accepted; today this fork
-                         points it at the shared qwen3.6 chat llama-server
-                         managed by scripts/llama-services.sh)
-  BONSAI_MODEL           default qwen3.6-test
+  GK_LLM_URL             default http://localhost:8080
+                         (OpenAI-compatible classifier endpoint; today this
+                         is the shared qwen3.6 chat llama-server managed by
+                         scripts/llama-services.sh. BONSAI_URL is still
+                         accepted as a deprecated alias.)
+  GK_LLM_MODEL           default qwen3.6-test
                          (must match the --alias the server was launched
-                         with; historically this was 'bonsai-8b')
+                         with. BONSAI_MODEL is still accepted as a
+                         deprecated alias.)
   GK_POLL_INTERVAL_SEC   default 5
   GK_DELTA               default 0.20   (margin threshold on A−B)
   GK_TAU                 default 0.75   (logprob confidence floor)
@@ -61,8 +66,18 @@ from pathlib import Path
 
 HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / "hermes-stack"))
 HONCHO_DIR = Path(os.environ.get("HONCHO_DIR", HERMES_HOME / "honcho"))
-BONSAI_URL = os.environ.get("BONSAI_URL", "http://localhost:8080")
-BONSAI_MODEL = os.environ.get("BONSAI_MODEL", "qwen3.6-test")
+# GK_LLM_* are the current names; BONSAI_* are kept as deprecated aliases
+# so older systemd drop-ins / shell wrappers keep working without edits.
+CLASSIFIER_URL = (
+    os.environ.get("GK_LLM_URL")
+    or os.environ.get("BONSAI_URL")
+    or "http://localhost:8080"
+)
+CLASSIFIER_MODEL = (
+    os.environ.get("GK_LLM_MODEL")
+    or os.environ.get("BONSAI_MODEL")
+    or "qwen3.6-test"
+)
 POLL_INTERVAL_SEC = int(os.environ.get("GK_POLL_INTERVAL_SEC", "5"))
 DELTA = float(os.environ.get("GK_DELTA", "0.20"))
 TAU = float(os.environ.get("GK_TAU", "0.75"))
@@ -223,9 +238,9 @@ def _psql_json(sql: str) -> list[dict]:
         return []
 
 
-def _call_bonsai(msg: str) -> tuple[dict, list[dict] | None, int]:
+def _call_classifier(msg: str) -> tuple[dict, list[dict] | None, int]:
     body = {
-        "model": BONSAI_MODEL,
+        "model": CLASSIFIER_MODEL,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user",   "content": f"Message to evaluate:\n{msg}"},
@@ -242,7 +257,7 @@ def _call_bonsai(msg: str) -> tuple[dict, list[dict] | None, int]:
         },
     }
     req = urllib.request.Request(
-        f"{BONSAI_URL}/v1/chat/completions",
+        f"{CLASSIFIER_URL}/v1/chat/completions",
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -455,17 +470,17 @@ def _classify_and_apply(row: dict, *, reeval: bool) -> None:
         return
 
     try:
-        verdict, lp, call_ms = _call_bonsai(content)
+        verdict, lp, call_ms = _call_classifier(content)
     except urllib.error.URLError as e:
-        log.warning("bonsai call failed for queue %s: %s", qid, e)
+        log.warning("classifier call failed for queue %s: %s", qid, e)
         return
     except json.JSONDecodeError as e:
-        log.warning("bonsai produced invalid JSON for queue %s: %s", qid, e)
+        log.warning("classifier produced invalid JSON for queue %s: %s", qid, e)
         return
 
     conf_lp = _decision_boundary_confidence(lp)
     new_status, audit = _decide(verdict, conf_lp)
-    audit["bonsai_call_ms"] = call_ms
+    audit["classifier_call_ms"] = call_ms
 
     _apply_verdict(qid, new_status, verdict, audit, bump_reclassify=reeval)
     mode = "reeval" if reeval else "init"

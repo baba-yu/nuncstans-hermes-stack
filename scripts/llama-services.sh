@@ -88,16 +88,15 @@ start_embed() {
 start_gatekeeper() {
     # Gatekeeper daemon classifies pending representation queue rows and
     # promotes them to ready (or demotes non-literal / low-importance ones).
-    # Uses the chat server on :8080 as the classifier LLM (via the
-    # BONSAI_URL / BONSAI_MODEL env names it was originally wired for).
-    # See scripts/gatekeeper_daemon.py for the decision rules.
+    # Uses the chat server on :8080 as the classifier LLM (GK_LLM_URL /
+    # GK_LLM_MODEL). See scripts/gatekeeper_daemon.py for the decision rules.
     if [[ -n "$(get_live_pid "$GK_PID_FILE")" ]]; then
         info "gatekeeper already running (pid $(cat "$GK_PID_FILE"))"
         return 0
     fi
     info "starting gatekeeper daemon"
-    BONSAI_URL=http://localhost:8080 \
-    BONSAI_MODEL=qwen3.6-test \
+    GK_LLM_URL=http://localhost:8080 \
+    GK_LLM_MODEL="$CHAT_ALIAS" \
     HERMES_HOME="$ROOT" \
     HONCHO_DIR="$ROOT/honcho" \
     nohup python3 "$ROOT/scripts/gatekeeper_daemon.py" \
