@@ -1,0 +1,12 @@
+↻ Resumed session 20260421_094646_216a02 (2 user messages, 6 total messages)
+That's a strong thesis. "Hybrid" over "local vs. cloud" is where the market actually is right now - and it's a much more defensible position for enterprise buyers.
+
+For this section of the report, I'd suggest structuring it around three angles:
+
+1. **Decision drivers** - when to use local vs. cloud (latency sensitivity, compliance/regulatory, cost model, internet availability at edge locations)
+2. **Architectural patterns** - how the two layers actually talk (cloud for heavy lifting / model updates, local for inference; orchestration tools that route based on context sensitivity; model distillation from cloud to local)
+3. **Practical use cases** - the concrete examples you listed (doc Q&A, copilots, code assist, edge inference, RAG systems)
+
+For the hardware angle, your RTX 5080 16GB is a solid reference point for "what's feasible today." Q4 quantization lets you squeeze decent 7B-14B parameter models into that VRAM budget with acceptable quality trade-offs.
+
+Want me to draft this section with actual content, or help you find specific examples/benchmarks to support each claim? Also - do you have a target publication or just compiling notes?

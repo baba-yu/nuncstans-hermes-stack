@@ -1,0 +1,12 @@
+It looks like we've started this conversation three times today without landing on a concrete plan. No wonder things feel stuck — we keep restarting.
+
+Let me cut to the chase: I know you're a DevOps Engineer with an RTX 5080 (16GB VRAM) interested in local LLMs. But I don't actually have a record of what specific direction or topic you decided on. Where did you want to go with the report?
+
+A few angles that fit your hardware and background:
+
+1. **Edge/enterprise local LLM deployment** — architectures and quantization (GGUF, GPTQ) that fit on consumer hardware, inference optimization, serving setups
+2. **Fine-tuning on consumer GPUs** — PEFT methods, LoRA/QLoRA, what's possible on 16GB VRAM
+3. **Benchmarking local LLMs** — latency, quality tradeoffs, model selection for real-world edge use
+4. **Survey of recent local LLM advances** — what's new in the space, model families that fit on commodity hardware
+
+Do any of these resonate, or did we have a different direction in mind?

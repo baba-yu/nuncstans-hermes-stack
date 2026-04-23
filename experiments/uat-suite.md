@@ -1,12 +1,19 @@
 # UAT suite — S7 / S8 / S9 gatekeeper regression tests
 
+> **⚠️ Status (2026-04-23): the preflight and scenario scripts under `test/uat/scripts/` still assume the archived two-endpoint Bonsai+Ollama topology.** `00_preflight.sh` checks for `bonsai-8b` at `:8080` and Ollama at `:11434`; both checks fail against the current single-endpoint stack (qwen3.6 llama-server at `:8080`, no Ollama). The scenarios themselves (S5–S9) call the Honcho HTTP API and don't care about the backend shape, but they can't run until preflight is rewritten. When you come to update these:
+>
+> - `00_preflight.sh` should check `qwen3.6-test` at `:8080/v1/models` instead of `bonsai-8b`, drop the Ollama check, and add `openai/text-embedding-3-small` at `:8081/v1/models`.
+> - `HERMES_HOME` variable in `plan/PLAN.md` still defaults to `/home/baba-y/hermes-stack` — should be `nuncstans-hermes-stack`.
+>
+> The description of the test intent (gatekeeper → deriver → supersede invariants) is backend-agnostic and still accurate; only the preflight wiring is stale.
+
 Three scenario scripts under `test/uat/scripts/` exercise the gatekeeper → deriver → supersede pipeline end-to-end against a running stack. They hit the live Honcho HTTP API, peek at the Postgres schema to read verdicts, and wait for the deriver container to process the queue. No mocks.
 
 Run these after you change anything under `honcho/src/deriver/*`, the gatekeeper daemon (`scripts/gatekeeper_daemon.py`), the `queue.gate_verdict` / `queue.status` schema, or the `supersede_observations` tool wiring. They are the fast way to confirm the three user-visible invariants (literal messages produce observations, hypotheticals are filtered, explicit corrections retract prior facts) still hold.
 
 ## Prerequisites
 
-A running Honcho + Bonsai + Ollama stack. The scripts default to `HONCHO_URL=http://localhost:8000`, `BONSAI_URL=http://localhost:8080`, `OLLAMA_URL=http://localhost:11434`; override any of those via env if you run a non-default setup.
+A running Honcho + llama.cpp stack — originally documented against the two-endpoint Bonsai+Ollama design, which is why `00_preflight.sh` still references `BONSAI_URL=http://localhost:8080` and `OLLAMA_URL=http://localhost:11434`. See the banner above for what needs to change. Overrides are read from env.
 
 ```bash
 export HERMES_HOME=/home/baba-y/hermes-stack     # MUST be set — lib.sh reads it

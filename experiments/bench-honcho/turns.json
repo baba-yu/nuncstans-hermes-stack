@@ -1,0 +1,32 @@
+[
+  {
+    "id": 1,
+    "label": "self_intro",
+    "timeout_s": 600,
+    "text": "Hello, my name is Yuki. I am planning to prepare a report on LLM research."
+  },
+  {
+    "id": 2,
+    "label": "info_1",
+    "timeout_s": 1200,
+    "text": "Local LLMs are language models that run on enterprise-owned PCs, workstations, servers, or edge devices instead of relying entirely on a public cloud API. Their main advantages are lower data exposure, better control, offline or low-latency operation, and easier customization for internal workflows. Recent on-device progress is meaningful: billion-parameter models can now run in real time on flagship devices, which makes local deployment more practical than it was a few years ago."
+  },
+  {
+    "id": 3,
+    "label": "info_2",
+    "timeout_s": 1200,
+    "text": "The current trend is not \"local replaces cloud,\" but \"hybrid deployment.\" In practice, organizations use local LLMs for sensitive document Q&A, internal copilots, code assistance, factory or retail edge workflows, and RAG-based knowledge systems. The driver is operational: local inference reduces latency and can help with privacy and data-governance requirements, especially where data should stay close to where it is generated."
+  },
+  {
+    "id": 4,
+    "label": "info_3",
+    "timeout_s": 1200,
+    "text": "On market size, there is no single universally accepted \"local LLM\" category, so a practical proxy is the edge AI market. One 2025 industry estimate puts global edge AI at about $24.91B in 2025, growing to $118.69B by 2033; separately, one 2026 market report values the broader LLM market at $10.97B in 2026, reaching $32.5B by 2030. Strategy-wise, the safest recommendation is to start with a narrow, high-value use case: choose tasks with sensitive data, repeated internal workflows, and measurable ROI; use small or mid-sized open models first; and keep a hybrid path so large cloud models remain available for harder tasks."
+  },
+  {
+    "id": 5,
+    "label": "create_pptx",
+    "timeout_s": 3600,
+    "text_template": "Create a 5-slide summary deck based on the information above. This PowerPoint is for presenting \"New Opportunities for Local LLMs.\" Although it should include forecasts with quantitative evaluation, you can place placeholders for those sections. The file name should be \"llm_presentation_{N}.pptx\". Save it in the current working directory."
+  }
+]

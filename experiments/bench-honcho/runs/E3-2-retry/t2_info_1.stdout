@@ -1,0 +1,59 @@
+↻ Resumed session 20260421_121303_2b1296 (1 user message, 2 total messages)
+Good context — that's a solid foundation for the report. Let me help you structure and expand this. Here's a proposed outline with the key angles you've identified:
+
+---
+
+## Report Outline: Local LLMs
+
+**1. Introduction**
+   - Define Local LLMs (running on enterprise-owned PCs, workstations, servers, edge devices)
+   - Contrast with cloud API-based deployment
+   - Thesis: Real-time inference on billion-parameter models now fits on consumer/enterprise hardware
+
+**2. Why Go Local**
+   - **Lower data exposure** — keep proprietary data in-house, avoid API leakage
+   - **Better control** — full governance over model versioning, updates, rollout
+   - **Offline / low-latency operation** — no network dependency, suitable for edge/remote sites
+   - **Easier customization** — fine-tune for internal workflows without vendor lock-in
+
+**3. Hardware Feasibility**
+   - Consumer-grade GPUs (e.g., NVIDIA RTX 3060 12GB, RTX 4080/5080) running billion-parameter models in real time
+   - Quantization breakthroughs (GGUF, 4/8-bit) shrinking model footprint
+   - Memory constraints: 7B models need ~4-8GB VRAM at 4-bit; 70B needs multi-GPU or CPU offloading
+
+**4. Open-Source Models Driving Adoption**
+   - Llama 3 / 3.1 family (8B, 70B)
+   - Mistral, Mixtral, Phi series
+   - Qwen, Gemma, and other alternatives
+
+**5. Inference & Deployment**
+   - llama.cpp (GGUF inference, cross-platform)
+   - Ollama, vLLM, Text Generation Inference
+   - Containerized on-prem deployments (Kubernetes, Docker)
+
+**6. Use Cases in Enterprise**
+   - Internal knowledge search / Q&A
+   - Document drafting, code assistance
+   - Edge inference for industrial / field applications
+   - Compliance-sensitive workflows (healthcare, finance, government)
+
+**7. Limitations & Risks**
+   - Capability gap vs. frontier cloud models
+   - Hardware cost at scale
+   - Maintenance burden (updates, monitoring, prompt engineering)
+
+**8. Future Outlook**
+   - Continued hardware improvements (more VRAM, better memory bandwidth)
+   - Smaller models closing the capability gap
+   - Hybrid cloud-on-prem architectures
+
+---
+
+How does this look? I can:
+
+- **Expand any section** with deeper research and citations
+- **Add/remove sections** based on your priorities
+- **Write full drafts** for specific sections
+- **Source papers, blog posts, benchmarks** for references
+
+What direction would you like to go?

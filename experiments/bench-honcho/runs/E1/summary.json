@@ -1,0 +1,28 @@
+{
+  "experiment": 1,
+  "honcho_variant": "bonsai",
+  "inference_model": "qwen3.5:9b",
+  "bonsai": {
+    "parallel": 1,
+    "ctx": 16384,
+    "needed": true
+  },
+  "ollama": {
+    "overhead": 8589934592,
+    "max_loaded": 1
+  },
+  "wall_seconds": 1400.615570068,
+  "drain_seconds": 243.134678863,
+  "total_seconds": 1643.750248931,
+  "deriver_queue_rows": 2,
+  "observations_created": 0,
+  "exit_code": 0,
+  "pptx": {
+    "ok": true,
+    "path": "/home/baba-y/llm_presentation_1.pptx",
+    "slides": 5,
+    "size": 153511,
+    "method": "python-pptx"
+  },
+  "start_iso": "2026-04-21T01:45:33-07:00"
+}

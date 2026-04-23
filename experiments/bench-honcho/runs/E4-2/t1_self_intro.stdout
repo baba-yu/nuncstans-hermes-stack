@@ -1,0 +1,17 @@
+Hello, Yuki! Nice to meet you again (if we've spoken before) or welcome!
+
+So you're working on a report about LLM research — that aligns nicely with your background as a DevOps Engineer. A few quick questions to help me tailor my assistance:
+
+1. **What's the focus of the report?** Are you interested in local/private LLM deployment (models running on your own hardware like the NVIDIA RTX 5080 16GB VRAM), enterprise LLM adoption, benchmarking, fine-tuning, or something broader?
+
+2. **Who is your audience?** (e.g., technical team, management, general readership)
+
+3. **What stage are you at?** (planning, research, writing, reviewing?)
+
+4. **Are there specific angles or key findings you want to cover?** For example:
+   - Cost comparison: cloud vs. local inference
+   - Privacy/data sovereignty benefits
+   - Performance benchmarks of local models
+   - Specific use cases (RAG, fine-tuned assistants, edge deployment)
+
+Let me know where you'd like to start!

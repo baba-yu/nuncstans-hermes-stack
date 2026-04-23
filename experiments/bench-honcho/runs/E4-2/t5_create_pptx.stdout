@@ -1,0 +1,169 @@
+↻ Resumed session 20260421_131908_5122b2 (4 user messages, 8 total messages)
+  ┊ review diff
+a//tmp/create_deck.js → b//tmp/create_deck.js
+@@ -0,0 +1,73 @@
++const pptxgen = require("pptxgenjs");
++
++let pres = new pptxgen();
++pres.layout = "LAYOUT_WIDE";
++pres.author = "Yuki";
++pres.title = "New Opportunities for Local LLMs";
++
++// ======================================================
++// COLOR PALETTE
++// ======================================================
++const C = {
++  navy:     "0B1120",
++  teal:     "06A77D",
++  cyan:     "22D3EE",
++  white:    "FFFFFF",
++  offWhite: "F1F5F9",
++  lightGray:"E2E8F0",
++  darkGray: "334155",
++  midGray:  "64748B",
++  black:    "020617",
++  cardBg:   "FFFFFF",
++  accentBlue:"3B82F6",
++  mutedBg1:  "0F172A",
++  mutedBg2:  "1E293B",
++  gold:     "F59E0B",
++};
++
++// ======================================================
++// SLIDE 1 - TITLE SLIDE
++// ======================================================
++const s1 = pres.addSlide();
++s1.background = { color: C.navy };
++
++// Subtle geometric accent lines
++s1.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 13.3, h: 0.06, fill: { color: C.teal } });
++s1.addShape(pres.shapes.RECTANGLE, { x: 0, y: 5.58, w: 13.3, h: 0.06, fill: { color: C.teal } });
++
++// Large accent box behind title
++s1.addShape(pres.shapes.RECTANGLE, {
++  x: 1.0, y: 1.4, w: 11.3, h: 2.2,
++  fill: { color: C.teal, transparency: 0.88 }
++});
++
++// Title text
++s1.addText("New Opportunities\nfor Local LLMs", {
++  x: 1.0, y: 1.6, w: 11.3, h: 1.8,
++  fontSize: 42, fontFace: "Calibri",
++  color: C.white, bold: true,
++  align: "center", valign: "middle"
++});
++
++// Subtitle
++s1.addText("Hybrid Deployment, Edge Inference, and the Shift from\nAPI Dependency to On-Prem Control", {
++  x: 1.5, y: 3.7, w: 10.3, h: 0.7,
++  fontSize: 18, fontFace: "Calibri",
++  color: C.lightGray,
++  align: "center"
++});
++
++// Bottom accent tagline
++s1.addShape(pres.shapes.RECTANGLE, {
++  x: 5.65, y: 4.7, w: 2.0, h: 0.04,
++  fill: { color: C.cyan }
++});
++
++s1.addText("MARKET TRENDS  HYBRID ARCHITECTURE  STRATEGIC ROADMAP", {
++  x: 2.0, y: 5.0, w: 9.3, h: 0.4,
++  fontSize: 11, fontFace: "Calibri",
++  color: C.teal, bold: true,
++  align: "center", charSpacing: 3
++});
++
++//
+  ┊ review diff
+a//tmp/create_deck.js → b//tmp/create_deck.js
+@@ -1,73 +1,381 @@
+ const pptxgen = require("pptxgenjs");
+ 
+-let pres = new pptxgen();
++const pres = new pptxgen();
+ pres.layout = "LAYOUT_WIDE";
+ pres.author = "Yuki";
+ pres.title = "New Opportunities for Local LLMs";
+ 
+-// ======================================================
+-// COLOR PALETTE
+-// ======================================================
+-const C = {
+-  navy:     "0B1120",
+-  teal:     "06A77D",
+-  cyan:     "22D3EE",
+-  white:    "FFFFFF",
+-  offWhite: "F1F5F9",
+-  lightGray:"E2E8F0",
+-  darkGray: "334155",
+-  midGray:  "64748B",
+-  black:    "020617",
+-  cardBg:   "FFFFFF",
+-  accentBlue:"3B82F6",
+-  mutedBg1:  "0F172A",
+-  mutedBg2:  "1E293B",
+-  gold:     "F59E0B",
++// ============= COLOR PALETTE =============
++const NAVY    = "0F172A";
++const CHAR    = "1E293B";
++const TEAL    = "06A77D";
++const CYAN    = "22D3EE";
++const WHITE   = "FFFFFF";
++const LGRAY   = "94A3B8";
++const MGRAY   = "64748B";
++const OFFWHITE= "F1F5F9";
++const CARDBG  = "FFFFFF";
++const ACCBLUE = "3B82F6";
++const GOLD    = "F59E0B";
++const RED     = "EF4444";
++
++// ============= HELPERS =============
++const addBox = (slide, x, y, w, h, fill, borderColor = null) => {
++  slide.addShape(pres.shapes.RECTANGLE, {
++    x, y, w, h,
++    fill: { color: fill },
++    line: borderColor ? { color: borderColor, width: 1 } : undefined
++  });
+ };
+ 
+-// ======================================================
+-// SLIDE 1 - TITLE SLIDE
+-// ======================================================
+-const s1 = pres.addSlide();
+-s1.background = { color: C.navy };
+-
+-// Subtle geometric accent lines
+-s1.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 13.3, h: 0.06, fill: { color: C.teal } });
+-s1.addShape(pres.shapes.RECTANGLE, { x: 0, y: 5.58, w: 13.3, h: 0.06, fill: { color: C.teal } });
+-
+-// Large accent box behind title
+-s1.addShape(pres.shapes.RECTANGLE, {
+-  x: 1.0, y: 1.4, w: 11.3, h: 2.2,
+-  fill: { color: C.teal, transparency: 0.88 }
+-});
+-
+-// Title text
+-s1.addText("New Opportunities\nfor Local LLMs", {
+-  x: 1.0, y: 1.6, w: 11.3, h: 1.8,
+-  fontSize: 42, fontFace: "Calibri",
+-  color: C.white, bold: true,
+-  align: "center", valign: "middle"
++function text(slide, str, x, y, w, h, opts = {}) {
++  slide.addText(str, {
++    x, y, w, h,
++    fontSize: opts.fontSize || 14,
++    fontFace: opts.fontFace || "Calibri",
++    color: opts.color || MGRAY,
++    bold: !!opts.bold,
+… omitted 364 diff line(s) across 1 additional file(s)/section(s)
+  ┊ review diff
+a//tmp/create_deck.js → b//tmp/create_deck.js
+@@ -14,6 +14,7 @@
+ const LGRAY   = "94A3B8";
+ const MGRAY   = "64748B";
+ const OFFWHITE= "F1F5F9";
++const E2E8F0  = "E2E8F0";
+ const CARDBG  = "FFFFFF";
+ const ACCBLUE = "3B82F6";
+ const GOLD    = "F59E0B";

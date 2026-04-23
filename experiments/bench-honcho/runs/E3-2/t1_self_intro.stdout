@@ -1,0 +1,12 @@
+Hello Yuki! Good to meet you again — I can see from earlier sessions today that we touched on this before. I have your profile noted: DevOps Engineer with an NVIDIA RTX 5080 (16GB VRAM), interested in local LLM research.
+
+Before we dive in — what's the scope and angle you'd like for the report? Some options:
+
+1. **Local/small LLMs** — running models on consumer hardware (fits your RTX 5080), quantization, efficiency
+2. **Fine-tuning methods** — LoRA, QLoRA, RLHF, DPO, etc.
+3. **Model architectures** — Transformer variants, Mamba/SSM, MoE, new approaches
+4. **Benchmarking & evaluation** — how we measure LLM progress
+5. **Deployment/operationalization** — serving frameworks, optimization, edge deployment
+6. **A broad survey** — a comprehensive overview of recent advances
+
+Or something else entirely?

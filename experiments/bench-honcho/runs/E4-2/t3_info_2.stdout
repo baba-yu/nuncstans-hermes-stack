@@ -1,0 +1,52 @@
+↻ Resumed session 20260421_131908_5122b2 (2 user messages, 4 total messages)
+This is a really strong framing — "hybrid deployment" is the right way to position this. The "local vs. cloud" narrative is outdated; the reality is that most organizations are going hybrid, using each where it makes operational sense.
+
+Here's how I see your report materializing. Let me sketch a structure that captures the key angles you've identified:
+
+---
+
+**Suggested Report Structure**
+
+**1. Executive Summary / Introduction**
+- Define local LLMs and the hybrid deployment thesis
+- Why this matters now (billion-parameter models on consumer hardware)
+
+**2. The Case for Hybrid — What Each Model Serves**
+- Cloud API: broad general knowledge, burst capacity, multimodal tasks
+- Local inference: sensitive doc Q&A, internal copilots, code assistance, factory/retail edge, RAG-based knowledge systems
+- Decision framework: how organizations choose
+
+**3. Why Organizations Go Local — The Operational Drivers**
+- Latency: local inference eliminates network round-trip time (critical for real-time workflows)
+- Privacy & data governance: data stays on-premises, no API leaks, compliance-friendly
+- Offline/cut-off operation: environments with no or unreliable connectivity
+- Cost predictability: capex over opex, no per-token metering
+
+**4. The Technology That Made This Practical**
+- Model size reduction: quantization (4-bit, 3-bit, 2-bit)
+- Architecture efficiency: MoE, distilled models, RoPE improvements
+- Hardware acceleration: CUDA/TensorRT optimization, vLLM, llama.cpp
+- The 16GB VRAM sweet spot: what models run at usable speed on RTX-class hardware
+
+**5. Deployment Patterns in Practice**
+- Desktop/workstation: internal copilots, code assistants
+- Server: document Q&A, RAG knowledge bases
+- Edge (factory/retail): offline inference, real-time response
+- Hybrid orchestration: local + cloud fallback
+
+**6. Risks & Trade-offs**
+- Capability gaps vs. cloud models
+- Ongoing model maintenance/updates
+- Hardware costs & power consumption
+
+**7. Outlook**
+
+---
+
+Is this structure aligned with what you had in mind? Or do you want to adjust — maybe add/remove sections, re-order, or go deeper on specific areas?
+
+Once we lock the outline, I can start pulling in:
+- **Specific benchmark data** (latency numbers, VRAM requirements, throughput)
+- **Real vendor/tooling landscape** (OpenWebUI, Ollama, vLLM, TGI, Text generation inference)
+- **Cost comparisons** (cloud API costs vs. local capex)
+- **Case studies or examples** if you want that layer

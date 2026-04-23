@@ -1,0 +1,55 @@
+↻ Resumed session 20260421_144101_78fae9 (2 user messages, 15 total messages)
+The memory system isn't matching on my old entry. That's fine — the context is fresh in our conversation anyway.
+
+Here's how the revised structure looks with this hybrid framing:
+
+```
+LOCAL LLMs IN HYBRID ENTERPRISE DEPLOYMENTS
+===========================================
+
+1. The Shift from Cloud-Only to Hybrid
+   - Why the old model broke down (latency, data governance, vendor lock-in)
+   - The emerging pattern: cloud for discovery/general, local for sensitive/critical
+
+2. Where Local Fits Today — Operational Use Cases
+   - Sensitive document Q&A
+   - Internal AI copilots (HR, legal, finance)
+   - Code assistance in restricted networks
+   - Factory floor + retail edge workflows
+   - RAG-based knowledge systems on private data
+
+3. Why Now: The Enabling Layer
+   - Billion-parameter models that run in real time on consumer hardware
+   - Quantization that doesn't destroy quality
+   - Hybrid inference architectures that route smartly
+
+4. Hardware Reality: What Runs on Commodity Gear
+   - Your RTX 5080 (16GB) as a representative workstation deploy
+   - Parameter/VRAM thresholds
+   - Edge vs workstation vs on-prem server
+
+5. Architecture Patterns
+   - Cloud/local routing decisions
+   - RAG for sensitive knowledge bases
+   - Code-assistant workflows on private repos
+   - Edge + cloud pipeline examples
+
+6. Operational Trade-Offs
+   - When to keep it local vs call cloud
+   - What each layer should handle
+   - Monitoring, updates, tuning across the hybrid stack
+   - Costs vs cloud pricing
+
+7. Enterprise Adoption Trajectory
+   - Where orgs are deploying today
+   - What's holding others back
+   - Next 12-24 months
+
+8. Conclusions
+```
+
+A few more questions:
+
+1. **Code assistance, code repos** — is it for general code gen or specifically for restricted-network code review/completion?
+2. **Edge examples** — do you want manufacturing/retail case-style examples, or more of the generic capability breakdown?
+3. **Any specific RAG stack** you prefer I cover (e.g., Ollama + Chroma, text-generation-inference + Weaviate, or the broader ecosystem)?

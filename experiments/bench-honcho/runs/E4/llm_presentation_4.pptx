@@ -1,0 +1,167 @@
+#!/usr/bin/env node
+const pptxgen = require("pptxgenjs");
+
+const BG_DARK  = "0B1A2E";
+const BG_CARD  = "FFFFFF";
+const ACCENT   = "065A82";
+const ACCENT_B = "14B8A6";
+const ACCENT_P = "7C3AED";
+const DRK      = "1E293B";
+const GRAY     = "64748B";
+const GRAY_L   = "94A3B8";
+const GREEN    = "047857";
+
+let pres = new pptxgen();
+pres.layout     = "LAYOUT_16x9";
+pres.author     = "Yuki";
+pres.title      = "New Opportunities for Local LLMs";
+
+/* helpers */
+const shOuter = (o) => {type:"outer",blur:4,offset:1,angle:135,color:"000000",opacity:o||0.08};
+
+function footer(s){
+  s.addShape(pres.shapes.RECTANGLE,{x:0,y:5.35,w:10,h:0.275,fill:{color:"E2E8F0"}});
+  s.addText("New Opportunities for Local LLMs | April 2026",{
+    x:0.5,y:5.375,w:6,h:0.225,fontSize:7,fontFace:"Calibri",color:GRAY,valign:"middle"});
+}
+function secHead(s,txt){
+  s.addShape(pres.shapes.RECTANGLE,{x:0.6,y:0.3,w:0.08,h:0.45,fill:{color:ACCENT_B}});
+  s.addText(txt,{x:0.85,y:0.22,w:8,h:0.65,fontSize:28,fontFace:"Calibri",bold:true,color:DRK,valign:"middle",margin:0});
+}
+
+/* === SLIDE 1 — TITLE === */
+let s1=pres.addSlide();
+s1.background={color:BG_DARK};
+
+/* top accent */
+s1.addShape(pres.shapes.RECTANGLE,{x:0,y:0,w:10,h:0.06,fill:{color:ACCENT_B}});
+
+/* decorative blocks */
+s1.addShape(pres.shapes.RECTANGLE,{x:0.8,y:0.4,w:0.6,h:0.6,fill:{color:ACCENT_B,transparency:85}});
+s1.addShape(pres.shapes.OVAL,     {x:8.8,y:4.3,w:1,h:1,fill:{color:ACCENT,transparency:80}});
+
+s1.addText("New Opportunities\nfor Local LLMs",{
+  x:0.8,y:1.6,w:8.5,h:2.2,fontSize:40,fontFace:"Calibri",bold:true,color:"FFFFFF",align:"left",valign:"middle"});
+
+s1.addText("Privacy-first, latency-optimized AI at the edge",{
+  x:0.8,y:3.8,w:7,h:0.7,fontSize:16,fontFace:"Calibri",italic:true,color:GRAY_L,align:"left"});
+
+/* bottom bar */
+s1.addShape(pres.shapes.RECTANGLE,{x:0,y:4.6,w:10,h:1.0,fill:{color:"0F2440"}});
+s1.addText("Presented by Yuki | April 2026",{
+  x:1,y:4.65,w:8,h:0.9,fontSize:12,fontFace:"Calibri",color:"8B8B8B",valign:"middle"});
+
+/* === SLIDE 2 — WHY LOCAL LLMs === */
+let s2=pres.addSlide();
+s2.background={color:"F0F4F8"};
+secHead(s2,"Why Local LLMs Matter Now");
+
+s2.addText("Three forces accelerate adoption:",{
+  x:0.6,y:1.1,w:8.8,h:0.5,fontSize:14,fontFace:"Calibri",color:GRAY,margin:0});
+
+const cards=[
+  {a:ACCENT,title:"Data Privacy & Sovereignty",stat:"100%",lbl:"data control"},
+  {a:ACCENT_B,title:"Latency & Reliability",    stat:"0ms",  lbl:"offline capability"},
+  {a:ACCENT_P,title:"Cost Efficiency",            stat:"80%+",lbl:"lower cost vs cloud"},
+];
+const cW=2.8, cH=2.3, cG=0.3, cSx=(10-3*cW-2*cG)/2;
+cards.forEach((c,i)=>{
+  let x=cSx+(cW+cG)*i, y=1.8;
+  s2.addShape(pres.shapes.RECTANGLE,{x,y,w:cW,h:cH,fill:{color:BG_CARD},shadow:shOuter()});
+  s2.addShape(pres.shapes.RECTANGLE,{x,y:y,w:cW,h:0.05,fill:{color:c.a}});
+  s2.addText(c.title,{x:x+0.15,y:y+0.15,w:cW-0.3,h:0.8,fontSize:i>0?15:14,fontFace:"Calibri",bold:true,color:DRK,valign:"bottom"});
+  let fs=c.stat.match(/^\d/) && c.stat.length<=3 ? 30 : 22;
+  s2.addText(c.stat,{x:x+0.15,y:y+1.0,w:cW-0.3,h:0.7,fontSize:fs,fontFace:"Calibri",bold:true,color:c.a,align:"center",margin:0});
+  s2.addText(c.lbl,{x:x+0.15,y:y+1.6,w:cW-0.3,h:0.5,fontSize:10,fontFace:"Calibri Light",color:GRAY,align:"center"});
+});
+footer(s2);
+
+/* === SLIDE 3 — KEY OPPORTUNITIES === */
+let s3=pres.addSlide();
+s3.background={color:"F0F4F8"};
+secHead(s3,"Key Opportunities for 2026");
+
+const opps=[
+  ["Edge AI Integration","Deploy models in mobile apps, IoT, and robotics for real-time inference."],
+  ["Privacy-Preserving Workflows","Handle PII, healthcare, and financial data entirely on-premises."],
+  ["Hybrid Cloud Architectures","Use local models for common tasks; route only edge-cases to the cloud."],
+];
+opps.forEach((o,i)=>{
+  let y=1.2+i*1.2;
+  /* accent line */
+  [0].forEach(()=>{s3.addShape(pres.shapes.RECTANGLE,{x:0.6,y:y,w:0.08,h:0.9,fill:{color:ACCENT}});});
+  s3.addText(o[0],{x:0.85,y:y+0.05,w:4.5,h:0.5,fontSize:15,fontFace:"Calibri",bold:true,color:DRK,margin:0});
+  s3.addText(o[1],{x:0.85,y:y+h::0.55,w:4.5,h:0.35,fontSize:10,fontFace:"Calibri Light",color:GRAY});
+});
+
+/* right market snapshot */
+s3.addShape(pres.shapes.RECTANGLE,{x:5.6,y:1.15,w:4,h:3.4,fill:{color:BG_CARD},shadow:shOuter()});
+s3.addText("Market Snapshot",{x:5.8,y:1.28,w:3.6,h:0.45,fontSize:16,fontFace:"Calibri",bold:true,color:DRK,margin:0});
+
+const stats=[
+  {v:"200B+",l:"Local LLM downloads\nin 2025"},
+  {v:"45%",l:"CAGR forecast\nthrough 2029"},
+  {v:"12ms",l:"Avg. inference\nlatency (local)"},
+  {v:"$50K",l:"Annual savings\nper 100 users"},
+];
+stats.forEach((m,i)=>{
+  let mx=5.8+(i%2)*1.9, my=1.85+Math.floor(i/2)*(0.7+1.0);
+  s3.addText(m.v,{x:mx,y:my,w:1.7,h:0.7,fontSize:28,fontFace:"Calibri",bold:true,color:ACCENT_B,align:"center",margin:0});
+  s3.addText(m.l,{x:mx,y:my+0.55,w:1.7,h:0.5,fontSize:9,fontFace:"Calibri Light",color:GRAY,align:"center"});
+});
+
+footer(s3);
+
+/* === SLIDE 4 — FORECASTS & EVALUATION === */
+let s4=pres.addSlide();
+s4.background={color:"F0F4F8"};
+secHead(s4,"Forecasts & Quantitative Evaluation");
+
+/* chart placeholder */
+s4.addShape(pres.shapes.RECTANGLE,{x:0.6,y:1.1,w:5.8,h:3.6,fill:{color:BG_CARD},shadow:shOuter()});
+s4.addText("Market Size Forecast (2024-2029)",{x:0.8,y:1.2,w:5.4,h:0.4,fontSize:14,fontFace:"Calibri",bold:true,color:DRK,margin:0});
+s4.addText("[Placeholder: Insert area chart\nshowing local LLM market growth\nfrom $2.1B to $15.8B (CAGR ~45%)]",{
+  x:0.8,y:1.7,w:5.4,h:2.5,fontSize:11,fontFace:"Calibri Light",color:GRAY,align:"center",valign:"middle"});
+
+/* KPI card 1 */
+s4.addShape(pres.shapes.RECTANGLE,{x:6.8,y:1.1,w:2.6,h:1.6,fill:{color:ACCENT,transparency:92}});
+s4.addText("[XX%]",{x:7,w:2.2,h:0.9,fontSize:36,fontFace:"Calibri",bold:true,color:ACCENT,align:"center",margin:0});
+s4.addText("YoY Growth in Local\nLLM Deployments",{x:7,y:2,w:2.2,h:0.5,fontSize:9,fontFace:"Calibri Light",color:GRAY,align:"center"});
+
+/* KPI card 2 */
+s4.addShape(pres.shapes.RECTANGLE,{x:6.8,y:2.85,w:2.6,h:1.6,fill:{color:ACCENT_B,transparency:92}});
+s4.addText("[$X.XK]",{x:7,y:2.95,w:2.2,h:0.9,fontSize:28,fontFace:"Calibri",bold:true,color:GREEN,align:"center",margin:0});
+s4.addText("Avg. Cost per\n1M Tokens (Local vs\nCloud)",{x:7,y:3.85,w:2.2,h:0.5,fontSize:9,fontFace:"Calibri Light",color:GRAY,align:"center"});
+
+/* benchmark table placeholder */
+s4.addShape(pres.shapes.RECTANGLE,{x:0.6,y:4.85,w:8.8,h:0.45,fill:{color:BG_CARD},shadow:shOuter()});
+s4.addText("Benchmark Comparison Placeholder:",{x:0.8,y:4.9,w:8.4,h:0.35,fontSize:12,fontFace:"Calibri Light",color:GRAY,margin:0});
+
+footer(s4);
+
+/* === SLIDE 5 — CONCLUSION === */
+let s5=pres.addSlide();
+s5.background={color:BG_DARK};
+s5.addShape(pres.shapes.RECTANGLE,{x:0,y:0,w:10,h:0.06,fill:{color:ACCENT_B}});
+
+s5.addText("The Future is Local",{x:0.8,y:1.2,w:8.5,h:1.5,fontSize:44,fontFace:"Calibri",bold:true,color:"FFFFFF",align:"left",margin:0});
+
+const recs=[
+  "Local LLMs are the default choice for privacy-first, latency-sensitive workflows",
+  "Hardware revolution (NPUs, edge TPUs, consumer GPUs) drives affordability",
+  "Start small — prototype with Llama 3.2, Phi-4-mini, or Qwen2.5"
+];
+recs.forEach((r,i)=>{
+  let y=2.7+i*0.65;
+  s5.addShape(pres.shapes.RECTANGLE,{x:0.6,y:y,w:0.1,h:0.35,fill:{color:ACCENT_B}});
+  s5.addText("  "+r,{x:0.8,y:y,w:8.5,h:0.4,fontSize:14,fontFace:"Calibri Light",color:GRAY_L,valign:"middle"});
+});
+
+s5.addShape(pres.shapes.RECTANGLE,{x:0,y:4.6,w:10,h:0.9,fill:{color:"0F2440"}});
+s5.addText("CTA placeholder: Start a proof-of-concept with your team today",{x:0.8,y:4.65,w:8.5,h:0.8,fontSize:12,fontFace:"Calibri",bold:true,italic:true,color:ACCENT_B,valign:"middle",margin:0});
+
+s5.addShape(pres.shapes.RECTANGLE,{x:0,y:5.35,w:10,h:0.275,fill:{color:"E2E8F0"}});
+s5.addText("New Opportunities for Local LLMs | April 2026",{x:0.5,y:5.375,w:6,h:0.225,fontSize:7,fontFace:"Calibri",color:GRAY,valign:"middle"});
+
+/* write */
+pres.writeFile({fileName:"llm_presentation_4.pptx"}).then(()=>console.log("Written llm_presentation_4.pptx"));

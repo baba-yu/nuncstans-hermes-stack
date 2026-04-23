@@ -1,0 +1,55 @@
+↻ Resumed session 20260421_144101_78fae9 (1 user message, 9 total messages)
+The report topic is now clearly defined. Let me lock in the context and get to work on a report.
+
+Here's the structure I'm thinking would work well for this:
+
+```
+LOCAL LLMs:
+Running Intelligence at the Edge
+=================================
+
+1. Introduction
+   - What are local LLMs (definition, scope)
+   - Why now (key enabling factors)
+   - Enterprise motivation
+
+2. Why Local Over Cloud
+   - Data sovereignty / privacy
+   - Latency / reliability
+   - Cost structure (capex vs opex)
+   - Customization and control
+
+3. Enabling Technologies
+   - Quantization (GGUF, GPTQ, AWQ)
+   - Models that fit on consumer hardware
+   - Inference frameworks (llama.cpp, vLLM, Ollama, text-generation-inference)
+
+4. Deployment Targets
+   - Workstation-class (your RTX 5080 16GB context)
+   - Edge devices / thin clients
+   - On-prem servers
+
+5. What Runs on Commodity Hardware Now
+   - Model families: Llama 3/4, Mistral, Qwen, Gemma, Phi
+   - Parameter ranges practical on different hardware
+   - Real-time performance benchmarks
+
+6. Practical Considerations
+   - Setup and operations
+   - Monitoring and tuning
+   - Limitations and trade-offs
+
+7. Where This is Going
+   - Hardware trends
+   - Model efficiency gains
+   - Enterprise adoption trajectory
+
+8. Conclusions
+```
+
+A few questions before I draft:
+
+1. **Audience?** Technical (engineering/ops readers) or broader (management/decision-makers)?
+2. **Depth on benchmarks?** Want concrete numbers for your RTX 5080 specifically, or higher-level model comparisons?
+3. **Length?** Quick reference (~2 pages) or comprehensive (~8-10 pages)?
+4. **Any specific models or tools you want featured** — or should I include the ones that are most relevant in the market right now?

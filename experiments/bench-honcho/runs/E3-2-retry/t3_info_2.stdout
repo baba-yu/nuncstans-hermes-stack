@@ -1,0 +1,69 @@
+↻ Resumed session 20260421_121303_2b1296 (2 user messages, 4 total messages)
+That's a sharp distinction — "hybrid" rather than "replace" — and it changes the narrative in a useful way. Here's the revised outline with that angle front and center:
+
+---
+
+## Report Outline (Revised): Hybrid LLM Deployment
+
+**1. Introduction**
+   - The hybrid model: local LLMs + cloud APIs working together
+   - Why organizations don't pick one — both have a role
+   - Defining local LLMs in practice
+
+**2. The Hybrid Architecture Pattern**
+   - **Local path**: sensitive RAG, internal copilots, code assistants, factory/edge inference
+   - **Cloud path**: frontier-tier capabilities, burst traffic, general-purpose tasks
+   - Decision flow: how organizations route queries between paths
+   - The "data stays close to where it's generated" principle
+
+**3. Why Hybrid, Not Pure Local**
+   - Local: privacy, low latency, compliance-sensitive workflows, edge operations
+   - Cloud: capability ceiling, cost efficiency for peak demand, rapid frontier updates
+   - Trade-offs that drive the split
+
+**4. Operational Drivers for Local Inference**
+   - Latency — no API round-trip, critical for real-time workflows (factory line, retail kiosk)
+   - Data governance — proprietary data never leaves premises
+   - Reliability — works when network goes down
+   - Cost predictability — fixed hardware vs. per-token billing at scale
+
+**5. Common Local Deployment Patterns**
+   - **RAG-based knowledge systems** — document Q&A over internal wikis, SOPs
+   - **Internal copilots** — tailored to company tone, tools, domain vocabulary
+   - **Code assistance** — private codebases, no leakage to external API
+   - **Edge workflows** — factory floor inspection, retail assistant, field agent tools
+   - **Compliance pipelines** — healthcare PHI, financial records, government data
+
+**6. Hardware & Model Stack**
+   - What fit on a workstation today (RTX 3060/4080/5080 class)
+   - Quantized 7B–13B models as the sweet spot for on-device
+   - When multi-GPU or CPU offloading becomes necessary
+   - Server-class deployments for higher-capability needs
+
+**7. Use Cases That Favor Pure Local vs. Hybrid**
+   - Strongest local cases: RAG on classified docs, PHI-sensitive workflows, isolated factory floors
+   - Best hybrid cases: general Q&A routing to cloud + local fallback, burst capacity overflow
+   - What shouldn't go local yet (models that still need frontier-tier reasoning)
+
+**8. Implementation Considerations**
+   - Model selection for the target workload
+   - GPU memory sizing (4-bit vs. 8-bit, context length impact)
+   - RAG pipeline setup (embedding models, chunking, retrieval strategies)
+   - Monitoring, update cadence, and prompt governance
+   - Vendor-neutral approach (open weights vs. proprietary open models)
+
+**9. Limitations**
+   - Capability gap — 7B local models vs. frontier cloud models on complex tasks
+   - Hardware cost at enterprise scale
+   - Operational burden: versioning, security hardening, monitoring
+   - Prompt injection risks that persist even on-prem
+
+**10. Future Outlook**
+   - Smaller models catching up on reasoning/benchmarks
+   - Hardware improvements (more VRAM, faster memory)
+   - Regulatory tailwinds (data sovereignty laws, AI compliance mandates)
+   - The likely end state: most enterprises run some mix
+
+---
+
+This puts hybrid as the thesis, operational concerns as the driver, and maps the landscape without overselling local-as-replacement. Does this hit the mark? I can start drafting sections or deepening any area — your call on what to tackle first.

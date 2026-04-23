@@ -1,0 +1,78 @@
+{
+  "experiment": 4,
+  "tag": "2-retry",
+  "honcho_variant": "ollama-9b",
+  "inference_model": "qwen3.5:9b",
+  "bonsai": {
+    "parallel": 1,
+    "ctx": 16384,
+    "needed": false
+  },
+  "turns": [
+    {
+      "id": 1,
+      "label": "self_intro",
+      "timeout_s": 600,
+      "wall_seconds": 238.476831484,
+      "exit_code": 0,
+      "session_id": "20260421_140844_ff476f",
+      "stdout_bytes": 1077,
+      "stderr_bytes": 36
+    },
+    {
+      "id": 2,
+      "label": "info_1",
+      "timeout_s": 1200,
+      "wall_seconds": 104.244321861,
+      "exit_code": 0,
+      "session_id": "20260421_140844_ff476f",
+      "stdout_bytes": 1083,
+      "stderr_bytes": 36
+    },
+    {
+      "id": 3,
+      "label": "info_2",
+      "timeout_s": 1200,
+      "wall_seconds": 197.540179725,
+      "exit_code": 0,
+      "session_id": "20260421_140844_ff476f",
+      "stdout_bytes": 849,
+      "stderr_bytes": 36
+    },
+    {
+      "id": 4,
+      "label": "info_3",
+      "timeout_s": 1200,
+      "wall_seconds": 107.348698435,
+      "exit_code": 0,
+      "session_id": "20260421_140844_ff476f",
+      "stdout_bytes": 1190,
+      "stderr_bytes": 36
+    },
+    {
+      "id": 5,
+      "label": "create_pptx",
+      "timeout_s": 3600,
+      "wall_seconds": 1013.74019045,
+      "exit_code": 0,
+      "session_id": "20260421_140844_ff476f",
+      "stdout_bytes": 5429,
+      "stderr_bytes": 36
+    }
+  ],
+  "wall_seconds": 1661.350221955,
+  "drain_seconds": 230.291983582,
+  "total_seconds": 1891.642205537,
+  "completed_all_turns": true,
+  "any_turn_timeout": false,
+  "fail_at": null,
+  "session_id": "20260421_140844_ff476f",
+  "pptx": {
+    "ok": true,
+    "path": "/home/baba-y/nuncstans-hermes-stack/llm_presentation_4.pptx",
+    "slides": 5,
+    "size": 36003,
+    "method": "python-pptx"
+  },
+  "start_iso": "2026-04-21T14:08:43-07:00"
+}

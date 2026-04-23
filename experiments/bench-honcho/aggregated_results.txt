@@ -1,0 +1,269 @@
+[
+  {
+    "experiment": 1,
+    "honcho_variant": "bonsai",
+    "inference_model": "qwen3.5:9b",
+    "bonsai": {
+      "parallel": 1,
+      "ctx": 16384,
+      "needed": true
+    },
+    "ollama": {
+      "overhead": 8589934592,
+      "max_loaded": 1
+    },
+    "wall_seconds": 1400.615570068,
+    "drain_seconds": 243.134678863,
+    "total_seconds": 1643.750248931,
+    "deriver_queue_rows": 2,
+    "observations_created": 0,
+    "exit_code": 0,
+    "pptx": {
+      "ok": true,
+      "path": "/home/baba-y/llm_presentation_1.pptx",
+      "slides": 5,
+      "size": 153511,
+      "method": "python-pptx"
+    },
+    "start_iso": "2026-04-21T01:45:33-07:00",
+    "vram": {
+      "vram_peak_mib": 15191,
+      "vram_mean_mib": 13862,
+      "gpu_util_mean_pct": 6.7,
+      "samples": 1557
+    },
+    "deriver_stats": {
+      "deriver_perf_lines": 0,
+      "deriver_llm_calls": 0,
+      "observations_logged": 0
+    },
+    "bonsai_stats": {
+      "bonsai_timings": 6,
+      "bonsai_slots_released": 6
+    }
+  },
+  {
+    "experiment": 2,
+    "honcho_variant": "bonsai",
+    "inference_model": "qwen3.6:35b",
+    "bonsai": {
+      "parallel": 1,
+      "ctx": 16384,
+      "needed": true
+    },
+    "ollama": {
+      "overhead": 8589934592,
+      "max_loaded": 1
+    },
+    "wall_seconds": 1906.000027277,
+    "drain_seconds": 0.338327884,
+    "total_seconds": 1906.338355161,
+    "deriver_queue_rows": 0,
+    "observations_created": 0,
+    "exit_code": 124,
+    "pptx": {
+      "ok": false,
+      "path": "/home/baba-y/nuncstans-hermes-stack/llm_presentation_2.pptx",
+      "error": "file not found"
+    },
+    "start_iso": "2026-04-21T02:29:20-07:00",
+    "vram": {
+      "vram_peak_mib": 15797,
+      "vram_mean_mib": 14977,
+      "gpu_util_mean_pct": 6.2,
+      "samples": 1799
+    },
+    "deriver_stats": {
+      "deriver_perf_lines": 0,
+      "deriver_llm_calls": 0,
+      "observations_logged": 0
+    },
+    "bonsai_stats": {
+      "bonsai_timings": 7,
+      "bonsai_slots_released": 7
+    }
+  },
+  {
+    "experiment": 3,
+    "honcho_variant": "ollama-9b",
+    "inference_model": "qwen3.6:35b",
+    "bonsai": {
+      "parallel": 1,
+      "ctx": 16384,
+      "needed": false
+    },
+    "ollama": {
+      "overhead": 0,
+      "max_loaded": 2
+    },
+    "wall_seconds": 1186.340127139,
+    "drain_seconds": 244.26310221,
+    "total_seconds": 1430.603229349,
+    "deriver_queue_rows": 2,
+    "observations_created": 0,
+    "exit_code": 0,
+    "pptx": {
+      "ok": true,
+      "path": "/home/baba-y/nuncstans-hermes-stack/experiments/bench-honcho/runs/E3/llm_presentation_3.pptx",
+      "slides": 5,
+      "size": 181168,
+      "method": "zip-fallback-after-pptx-error",
+      "pptx_error": "PCDATA invalid Char value 31, line 2, column 13171 (<string>, line 2)"
+    },
+    "start_iso": "2026-04-21T03:02:04-07:00",
+    "vram": {
+      "vram_peak_mib": 15774,
+      "vram_mean_mib": 15721,
+      "gpu_util_mean_pct": 7.9,
+      "samples": 1345
+    },
+    "deriver_stats": {
+      "deriver_perf_lines": 0,
+      "deriver_llm_calls": 0,
+      "observations_logged": 0
+    },
+    "bonsai_stats": {
+      "bonsai_timings": 7,
+      "bonsai_slots_released": 7
+    }
+  },
+  {
+    "experiment": 4,
+    "honcho_variant": "ollama-9b",
+    "inference_model": "qwen3.5:9b",
+    "bonsai": {
+      "parallel": 1,
+      "ctx": 16384,
+      "needed": false
+    },
+    "ollama": {
+      "overhead": 0,
+      "max_loaded": 1
+    },
+    "wall_seconds": 1844.202471834,
+    "drain_seconds": 0.397421289,
+    "total_seconds": 1844.5998931230001,
+    "deriver_queue_rows": 0,
+    "observations_created": 0,
+    "exit_code": 124,
+    "pptx": {
+      "ok": false,
+      "path": "/home/baba-y/llm_presentation_4.pptx",
+      "error": "Package not found at '/home/baba-y/llm_presentation_4.pptx'",
+      "fallback_error": "File is not a zip file",
+      "size": 8046
+    },
+    "start_iso": "2026-04-21T03:26:33-07:00",
+    "vram": {
+      "vram_peak_mib": 15807,
+      "vram_mean_mib": 15761,
+      "gpu_util_mean_pct": 8.1,
+      "samples": 1789
+    },
+    "deriver_stats": {
+      "deriver_perf_lines": 0,
+      "deriver_llm_calls": 0,
+      "observations_logged": 0
+    },
+    "bonsai_stats": {
+      "bonsai_timings": 7,
+      "bonsai_slots_released": 7
+    }
+  },
+  {
+    "experiment": 5,
+    "honcho_variant": "ollama-35b",
+    "inference_model": "qwen3.6:35b",
+    "bonsai": {
+      "parallel": 1,
+      "ctx": 16384,
+      "needed": false
+    },
+    "ollama": {
+      "overhead": 0,
+      "max_loaded": 1
+    },
+    "wall_seconds": 1801.418194519,
+    "drain_seconds": 0.379330155,
+    "total_seconds": 1801.797524674,
+    "deriver_queue_rows": 0,
+    "observations_created": 0,
+    "exit_code": 124,
+    "pptx": {
+      "ok": true,
+      "path": "/home/baba-y/nuncstans-hermes-stack/llm_presentation_5.pptx",
+      "slides": 5,
+      "size": 160894,
+      "method": "python-pptx"
+    },
+    "start_iso": "2026-04-21T03:58:04-07:00",
+    "vram": {
+      "vram_peak_mib": 15809,
+      "vram_mean_mib": 15706,
+      "gpu_util_mean_pct": 9.0,
+      "samples": 1794
+    },
+    "deriver_stats": {
+      "deriver_perf_lines": 0,
+      "deriver_llm_calls": 0,
+      "observations_logged": 0
+    },
+    "bonsai_stats": {
+      "bonsai_timings": 7,
+      "bonsai_slots_released": 7
+    }
+  },
+  {
+    "experiment": 6,
+    "honcho_variant": "bonsai",
+    "inference_model": "bonsai-8b",
+    "bonsai": {
+      "parallel": 1,
+      "ctx": 65536,
+      "needed": true
+    },
+    "ollama": {
+      "overhead": 8589934592,
+      "max_loaded": 1
+    },
+    "wall_seconds": 12.360892042,
+    "drain_seconds": 230.097269165,
+    "total_seconds": 242.458161207,
+    "deriver_queue_rows": 2,
+    "observations_created": 0,
+    "exit_code": 0,
+    "pptx": {
+      "ok": false,
+      "path": "/home/baba-y/nuncstans-hermes-stack/llm_presentation_6.pptx",
+      "error": "Package not found at '/home/baba-y/nuncstans-hermes-stack/llm_presentation_6.pptx'",
+      "fallback_error": "File is not a zip file",
+      "size": 495
+    },
+    "start_iso": "2026-04-21T05:11:53-07:00",
+    "vram": {
+      "vram_peak_mib": 6703,
+      "vram_mean_mib": 6688,
+      "gpu_util_mean_pct": 2.4,
+      "samples": 242
+    },
+    "deriver_stats": {
+      "deriver_perf_lines": 0,
+      "deriver_llm_calls": 0,
+      "observations_logged": 0
+    },
+    "bonsai_stats": {
+      "bonsai_timings": 9,
+      "bonsai_slots_released": 9
+    }
+  }
+]
+
+
+| # | Honcho backend | Inference | Wall (s) | Drain (s) | Total (s) | Obs | pptx OK | Slides | VRAM peak (MiB) | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| E1 | bonsai | qwen3.5:9b | 1400.6 | 243.1 | 1643.8 | 0 | ✓ | 5 | 15191 | — |
+| E2 | bonsai | qwen3.6:35b | 1906.0 | 0.3 | 1906.3 | 0 | ✗ | ? | 15797 | exit=124; pptx-fail |
+| E3 | ollama-9b | qwen3.6:35b | 1186.3 | 244.3 | 1430.6 | 0 | ✓ | 5 | 15774 | — |
+| E4 | ollama-9b | qwen3.5:9b | 1844.2 | 0.4 | 1844.6 | 0 | ✗ | ? | 15807 | exit=124; pptx-fail |
+| E5 | ollama-35b | qwen3.6:35b | 1801.4 | 0.4 | 1801.8 | 0 | ✓ | 5 | 15809 | exit=124 |
+| E6 | bonsai | bonsai-8b | 12.4 | 230.1 | 242.5 | 0 | ✗ | ? | 6703 | pptx-fail |

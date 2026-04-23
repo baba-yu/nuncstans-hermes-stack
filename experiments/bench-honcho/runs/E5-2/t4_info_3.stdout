@@ -1,0 +1,57 @@
+↻ Resumed session 20260421_144101_78fae9 (3 user messages, 19 total messages)
+That's solid, practical framing. Using edge AI as a proxy is the right move given the fuzzy boundaries. And your strategic recommendation is exactly what enterprises actually need — no hype, just a clear path.
+
+Here's how those pieces slot in:
+
+```
+LOCAL LLMs IN HYBRID ENTERPRISE DEPLOYMENTS
+
+1. The Market Context
+   - Edge AI as proxy: ~$24.9B (2025) → $118.7B (2033)
+   - Broader LLM market: ~$11B (2026) → $32.5B (2030)
+   - Why the fuzzy boundary (local LLM isn't tracked as its own category)
+   - What the growth signals for procurement/strategy
+
+2. From Cloud-Only to Hybrid
+   - The inflection points (latency ceilings, data governance, vendor dependency)
+   - The emerging pattern in practice
+
+3. Where Local Fits — Operational Use Cases
+   - Sensitive doc Q&A
+   - Internal copilots (HR, legal, finance)
+   - Code assistance in restricted networks
+   - Factory/retail edge
+   - RAG knowledge systems
+
+4. The Enabling Layer
+   - Real-time billion-parameter models on consumer hardware
+   - Quantization that preserves quality
+   - Routing between cloud and local
+
+5. Hardware Reality
+   - RTX 5080 (16GB) as the representational workstation
+   - What fits where: edge vs workstation vs on-prem
+   - Practical parameter/VRAM thresholds
+
+6. Architecture Patterns
+   - Cloud/local routing logic
+   - RAG on private corp knowledge
+   - Edge + cloud data pipelines
+
+7. Strategic Recommendation for Enterprises
+   → Start narrow: pick a high-value use case with (sensitive data + repeated workflow + measurable ROI)
+   → Use small/mid open models first (don't over-engineer)
+   → Lock in a hybrid path — keep cloud available for harder tasks
+   - Operational trade-offs across the hybrid stack
+   - What to monitor, update, tune
+
+8. Adoption Trajectory & Next Steps
+   - What's deployed today vs what's held back
+   - 12-24 month outlook
+```
+
+A few quick decisions to lock before I draft:
+
+1. **Length** — are we aiming for an executive summary (~5 pages) or a full technical reference (~10-12 pages)?
+2. **Tone** — straight analytical, or more like a practitioner's guide with actionable recommendations?
+3. **Specific models/examples** — want me to name specific open models worth considering today (Llama 3.x, Phi-4, Gemma, Qwen, Mistral variants)? Or keep it more architectural and model-agnostic?

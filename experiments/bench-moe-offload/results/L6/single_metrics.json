@@ -1,0 +1,56 @@
+{
+  "cell": "L6",
+  "flags": "-ngl 99 -ot ffn_(up|down|gate)_exps=CPU --reasoning off",
+  "single": {
+    "runs": [
+      {
+        "content_len": 399,
+        "content_nonempty": true,
+        "prompt_tokens": 4145,
+        "completion_tokens": 194,
+        "total_tokens": 4339,
+        "prompt_ms": 10933.406,
+        "prompt_per_second": 379.11333394186585,
+        "predicted_ms": 5404.815,
+        "predicted_per_second": 35.89392051346808,
+        "wall_s": 16.39
+      },
+      {
+        "content_len": 399,
+        "content_nonempty": true,
+        "prompt_tokens": 4145,
+        "completion_tokens": 193,
+        "total_tokens": 4338,
+        "prompt_ms": 86.071,
+        "prompt_per_second": 46.47326044776987,
+        "predicted_ms": 5346.386,
+        "predicted_per_second": 36.09915183826981,
+        "wall_s": 5.45
+      },
+      {
+        "content_len": 265,
+        "content_nonempty": true,
+        "prompt_tokens": 4145,
+        "completion_tokens": 126,
+        "total_tokens": 4271,
+        "prompt_ms": 85.428,
+        "prompt_per_second": 46.823055672613194,
+        "predicted_ms": 3647.747,
+        "predicted_per_second": 34.54186926889392,
+        "wall_s": 5.52
+      }
+    ],
+    "median_prompt_ms": 86.071,
+    "median_prompt_per_second": 46.823055672613194,
+    "median_predicted_ms": 5346.386,
+    "median_predicted_per_second": 35.89392051346808,
+    "median_wall_s": 5.52,
+    "median_prompt_tokens": 4145,
+    "median_completion_tokens": 193,
+    "content_nonempty_all": true
+  },
+  "resources": {
+    "vram_peak_mib": 7536,
+    "ram_peak_mib": 7688
+  }
+}

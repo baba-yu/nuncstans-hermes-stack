@@ -1,0 +1,56 @@
+{
+  "cell": "L4a",
+  "flags": "-ngl 30 --reasoning off",
+  "single": {
+    "runs": [
+      {
+        "content_len": 647,
+        "content_nonempty": true,
+        "prompt_tokens": 4145,
+        "completion_tokens": 305,
+        "total_tokens": 4450,
+        "prompt_ms": 25342.071,
+        "prompt_per_second": 163.56200722506065,
+        "predicted_ms": 25931.619,
+        "predicted_per_second": 11.761702961932304,
+        "wall_s": 53.01
+      },
+      {
+        "content_len": 437,
+        "content_nonempty": true,
+        "prompt_tokens": 4145,
+        "completion_tokens": 210,
+        "total_tokens": 4355,
+        "prompt_ms": 220.99,
+        "prompt_per_second": 18.10036653242228,
+        "predicted_ms": 17915.001,
+        "predicted_per_second": 11.722019998770861,
+        "wall_s": 19.93
+      },
+      {
+        "content_len": 535,
+        "content_nonempty": true,
+        "prompt_tokens": 4145,
+        "completion_tokens": 252,
+        "total_tokens": 4397,
+        "prompt_ms": 216.972,
+        "prompt_per_second": 18.435558505244916,
+        "predicted_ms": 21515.264,
+        "predicted_per_second": 11.712614820808149,
+        "wall_s": 23.53
+      }
+    ],
+    "median_prompt_ms": 220.99,
+    "median_prompt_per_second": 18.435558505244916,
+    "median_predicted_ms": 21515.264,
+    "median_predicted_per_second": 11.722019998770861,
+    "median_wall_s": 23.53,
+    "median_prompt_tokens": 4145,
+    "median_completion_tokens": 252,
+    "content_nonempty_all": true
+  },
+  "resources": {
+    "vram_peak_mib": 15941,
+    "ram_peak_mib": 7747
+  }
+}

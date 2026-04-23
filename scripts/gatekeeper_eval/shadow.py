@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Gatekeeper shadow runner — evaluate each message in the eval set against
-Bonsai and record raw + logprob-derived scores.
+the classifier LLM and record raw + logprob-derived scores.
 
 Outputs JSONL to ./results.jsonl.
 
 Design (per Q3 / Q4 commits):
-  - Single Bonsai call per message, JSON-schema-constrained output.
+  - Single classifier call per message, JSON-schema-constrained output.
   - CoT style prompt that separates "A vs B literal-ness" from "importance".
   - Request logprobs to compute a confidence independent of the self-reported one.
   - No side effects on the real Honcho queue — this runs against the model in
     isolation and is safe to repeat.
+
+The classifier endpoint is any OpenAI-compatible server; today this is the
+shared qwen3.6 chat llama-server on :8080 (see scripts/llama-services.sh).
+Historically this was a separate Bonsai-8B instance — BONSAI_URL /
+BONSAI_MODEL are accepted as deprecated env aliases.
 """
 from __future__ import annotations
 
@@ -21,8 +26,16 @@ import time
 import urllib.request
 from pathlib import Path
 
-BONSAI_URL = os.environ.get("BONSAI_URL", "http://localhost:8080")
-MODEL = os.environ.get("BONSAI_MODEL", "bonsai-8b")
+CLASSIFIER_URL = (
+    os.environ.get("GK_LLM_URL")
+    or os.environ.get("BONSAI_URL")
+    or "http://localhost:8080"
+)
+MODEL = (
+    os.environ.get("GK_LLM_MODEL")
+    or os.environ.get("BONSAI_MODEL")
+    or "qwen3.6-test"
+)
 DATA_PATH = Path(__file__).parent / "dataset.jsonl"
 OUT_PATH = Path(__file__).parent / "results.jsonl"
 
@@ -139,7 +152,7 @@ JSON_SCHEMA = {
 }
 
 
-def call_bonsai(msg: str) -> tuple[dict, list[dict] | None, int]:
+def call_classifier(msg: str) -> tuple[dict, list[dict] | None, int]:
     body = {
         "model": MODEL,
         "messages": [
@@ -158,7 +171,7 @@ def call_bonsai(msg: str) -> tuple[dict, list[dict] | None, int]:
         },
     }
     req = urllib.request.Request(
-        f"{BONSAI_URL}/v1/chat/completions",
+        f"{CLASSIFIER_URL}/v1/chat/completions",
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -216,12 +229,20 @@ def decision_boundary_confidence(logprobs: list[dict] | None) -> float | None:
 
 
 def main() -> int:
-    # Health check
+    # Health check — confirm the endpoint is reachable and advertises the
+    # model we'll be asking for. Any OpenAI-compatible server works.
     try:
-        with urllib.request.urlopen(f"{BONSAI_URL}/v1/models", timeout=5) as r:
-            assert "bonsai-8b" in r.read().decode()
+        with urllib.request.urlopen(f"{CLASSIFIER_URL}/v1/models", timeout=5) as r:
+            body = r.read().decode()
+        if MODEL not in body:
+            print(
+                f"classifier at {CLASSIFIER_URL} does not advertise model "
+                f"{MODEL!r}; /v1/models body was: {body[:300]}",
+                file=sys.stderr,
+            )
+            return 1
     except Exception as e:
-        print(f"bonsai not responding at {BONSAI_URL}: {e}", file=sys.stderr)
+        print(f"classifier not responding at {CLASSIFIER_URL}: {e}", file=sys.stderr)
         return 1
 
     items = [json.loads(line) for line in DATA_PATH.read_text().splitlines() if line.strip()]
@@ -230,7 +251,7 @@ def main() -> int:
     with OUT_PATH.open("w") as out:
         for i, it in enumerate(items, 1):
             try:
-                parsed, lp, dt = call_bonsai(it["msg"])
+                parsed, lp, dt = call_classifier(it["msg"])
             except Exception as e:
                 print(f"  [{i}/{len(items)}] {it['id']} ERROR: {e}", file=sys.stderr)
                 out.write(json.dumps({"id": it["id"], "error": str(e), "msg": it["msg"]}) + "\n")
