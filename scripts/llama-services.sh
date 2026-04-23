@@ -131,6 +131,7 @@ start_chat() {
         -ngl 99 \
         -ot "ffn_(up|down|gate)_exps=CPU" \
         --reasoning off \
+        --parallel 2 \
         --alias "$CHAT_ALIAS" \
         > "$CHAT_LOG" 2>&1 &
     echo $! > "$CHAT_PID_FILE"
