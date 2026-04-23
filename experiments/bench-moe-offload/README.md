@@ -30,7 +30,7 @@ adopt.
 
 ## Engine
 
-`llama-server` from `../../bonsai-llama.cpp/build/bin/`. This is the
+`llama-server` from `../../llama.cpp/build/bin/`. This is the
 PrismML-Eng/llama.cpp fork (ggml commit `e2d6742`), built with CUDA 12.9
 and `$ORIGIN` rpath — see `experiments/bottleneck.md` §2 for why.
 

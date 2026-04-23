@@ -21,7 +21,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-LLAMA_BUILD="$ROOT/bonsai-llama.cpp/build/bin"
+LLAMA_BUILD="$ROOT/llama.cpp/build/bin"
 EMBED_BLOB="/usr/share/ollama/.ollama/models/blobs/sha256-970aa74c0a90ef7482477cf803618e776e173c007bf957f635f1015bfcfef0e6"
 HF_CHAT_SPEC="unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL"
 CHAT_ALIAS="qwen3.6-test"

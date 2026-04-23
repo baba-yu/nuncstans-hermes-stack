@@ -23,7 +23,7 @@ CELL="${1:?cell id required: L1|L2|L3a|L3b|L4a|L4b|L5|L6}"
 # ---------- paths ----------
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BENCH_DIR="$ROOT/experiments/bench-moe-offload"
-LLAMA_BUILD="$ROOT/bonsai-llama.cpp/build/bin"
+LLAMA_BUILD="$ROOT/llama.cpp/build/bin"
 # Use unsloth's Q4_K_XL GGUF via -hf rather than ollama's stored blob.
 # Ollama ships the qwen3.6:35b blob with a 3-element
 # qwen35moe.rope.dimension_sections, which our llama.cpp fork rejects

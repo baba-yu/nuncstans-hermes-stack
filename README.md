@@ -21,7 +21,7 @@ This outer repo pins three git submodules — all the actual code lives in the l
 | Submodule | URL | Branch | Notes |
 |---|---|---|---|
 | `honcho/` | `baba-yu/nuncstans-honcho` | `dev` | Fork of `plastic-labs/honcho` with the gatekeeper classifier, peer-filtered deriver, `supersede_observations` tool, 768-dim vector columns, relaxed vector-dim validator, and the `tool_choice: "any"` → `"required"` normalization patch that makes dialectic/deriver work against llama.cpp's OpenAI-compatible server. |
-| `bonsai-llama.cpp/` | `PrismML-Eng/llama.cpp` | `master` | Upstream PrismML fork of llama.cpp. The path name is historical (this submodule originally hosted Bonsai-8B); the actual use today is as the source for the `llama-server` binary that serves both the Qwen3.6 chat model and the nomic-embed-text embedding model. Unmodified. |
+| `llama.cpp/` | `PrismML-Eng/llama.cpp` | `master` | Upstream PrismML fork of llama.cpp. Source for the `llama-server` binary that serves both the Qwen3.6 chat model and the nomic-embed-text embedding model. Unmodified. (The submodule was previously checked out at `bonsai-llama.cpp/` back when it hosted Bonsai-8B; see `experiments/bonsai-archive.md` if you are reading older commits and wondering where the `bonsai-llama.cpp/` directory went.) |
 | `honcho-self-hosted/` | `elkimek/honcho-self-hosted` | `main` | Upstream config overlay for running vanilla `plastic-labs/honcho`. Kept as the alternative stack (see [Switching stacks](#switching-between-the-gatekeeper-stack-and-upstream-honcho)). Unmodified. |
 
 **Clone with submodules:**
@@ -40,7 +40,7 @@ git submodule update --init --recursive
 
 # Pull the tip of each submodule's tracked branch and bump this repo's pointer
 git submodule update --remote
-git add honcho bonsai-llama.cpp honcho-self-hosted
+git add honcho llama.cpp honcho-self-hosted
 git commit -m "Bump submodules"
 ```
 
@@ -114,7 +114,7 @@ What keeps the stack running between reboots. If you're coming back to this repo
 
 | Asset | Path | Purpose | Started by |
 |---|---|---|---|
-| Chat `llama-server` | `bonsai-llama.cpp/build/bin/llama-server` serving `unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL` on `:8080` | Hermes main chat **and** Honcho memory loops (dialectic / deriver / summary / dream) | `./scripts/llama-services.sh start` |
+| Chat `llama-server` | `llama.cpp/build/bin/llama-server` serving `unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL` on `:8080` | Hermes main chat **and** Honcho memory loops (dialectic / deriver / summary / dream) | `./scripts/llama-services.sh start` |
 | Embedding `llama-server` | same binary, `-m` against the nomic-embed-text GGUF, on `:8081` | Honcho embeddings (aliased as `openai/text-embedding-3-small`) | `./scripts/llama-services.sh start` |
 | Honcho stack | `honcho/docker-compose.yml` — api + deriver + pgvector + redis | Memory store + extraction pipeline | `cd honcho && docker compose up -d` |
 | Gatekeeper daemon | `scripts/gatekeeper_daemon.py` | Classifies pending representation rows → ready / demoted, keeps trivia out of the observation store before the deriver picks them up. Uses the chat `:8080` as its classifier LLM (`GK_LLM_URL` / `GK_LLM_MODEL`). | Started by `./scripts/llama-services.sh start` as the third service (after chat + embed) |
@@ -196,10 +196,10 @@ Everything below runs inside **WSL2 Ubuntu**. The working directory is `$HOME/nu
 
 ### Step 1. Build `llama-server` with `$ORIGIN` RPATH
 
-The PrismML fork of `llama.cpp` is already checked out at `bonsai-llama.cpp/` by the recursive submodule clone. Build it **with CUDA on**.
+The PrismML fork of `llama.cpp` is already checked out at `llama.cpp/` by the recursive submodule clone. Build it **with CUDA on**.
 
 ```bash
-cd "$HOME/nuncstans-hermes-stack/bonsai-llama.cpp"
+cd "$HOME/nuncstans-hermes-stack/llama.cpp"
 export PATH=/usr/local/cuda/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 cmake -B build \
@@ -212,7 +212,7 @@ cmake --build build -j --config Release --target llama-server
 
 The CUDA build takes 5–10 minutes on a typical dev box; the heavy part is `ggml-cuda`'s CUDA kernels (there are many template instantiations per quantization type). The Blackwell `120a-real` architecture is added automatically by the fork's CMake when CUDA ≥ 12.8 is detected.
 
-**Note — the three extra `RPATH` flags are load-bearing, don't drop them.** Without them, CMake bakes the absolute build-tree path (e.g. `/home/you/nuncstans-hermes-stack/bonsai-llama.cpp/build/bin`) as `RUNPATH` into `llama-server` and every `lib*.so`. Rename or move the parent directory afterwards and `llama-server` dies at startup with `error while loading shared libraries: libmtmd.so.0: cannot open shared object file` even though the `.so` is sitting right next to the binary. This is a known upstream issue in `ggml-org/llama.cpp` ([#17193](https://github.com/ggml-org/llama.cpp/issues/17193), [#17190](https://github.com/ggml-org/llama.cpp/issues/17190), [#17950](https://github.com/ggml-org/llama.cpp/issues/17950)); upstream's merged fix ([PR #17214](https://github.com/ggml-org/llama.cpp/pull/17214)) only addresses the Docker-symlink side, not the absolute-RPATH side, so the `$ORIGIN` flags above are still required for local builds. The downstream consequence matters: if `llama-server` is silently down, Honcho keeps routing `dialectic` / `deriver` / `summary` / `dream` calls to `:8080`, each one stalls ~60 s in `tenacity` retries before giving up, and the whole Hermes loop feels hung. Verify after build with `readelf -d build/bin/llama-server | grep RUNPATH` — you want `[$ORIGIN]`, not an absolute path.
+**Note — the three extra `RPATH` flags are load-bearing, don't drop them.** Without them, CMake bakes the absolute build-tree path (e.g. `/home/you/nuncstans-hermes-stack/llama.cpp/build/bin`) as `RUNPATH` into `llama-server` and every `lib*.so`. Rename or move the parent directory afterwards and `llama-server` dies at startup with `error while loading shared libraries: libmtmd.so.0: cannot open shared object file` even though the `.so` is sitting right next to the binary. This is a known upstream issue in `ggml-org/llama.cpp` ([#17193](https://github.com/ggml-org/llama.cpp/issues/17193), [#17190](https://github.com/ggml-org/llama.cpp/issues/17190), [#17950](https://github.com/ggml-org/llama.cpp/issues/17950)); upstream's merged fix ([PR #17214](https://github.com/ggml-org/llama.cpp/pull/17214)) only addresses the Docker-symlink side, not the absolute-RPATH side, so the `$ORIGIN` flags above are still required for local builds. The downstream consequence matters: if `llama-server` is silently down, Honcho keeps routing `dialectic` / `deriver` / `summary` / `dream` calls to `:8080`, each one stalls ~60 s in `tenacity` retries before giving up, and the whole Hermes loop feels hung. Verify after build with `readelf -d build/bin/llama-server | grep RUNPATH` — you want `[$ORIGIN]`, not an absolute path.
 
 The cmake output is just the **`llama-server` executable** — the inference engine. You'll fetch the model GGUFs in Step 2.
 

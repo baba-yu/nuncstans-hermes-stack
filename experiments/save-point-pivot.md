@@ -219,7 +219,7 @@ Osaka" should supersede, not coexist).
   `llama-server` on :8081; chat moved to the shared `:8080`.
 - The legacy two-endpoint Bonsai-8B `llama-server` — archived in
   `experiments/bonsai-archive.md`. Infrastructure preserved (the
-  `bonsai-llama.cpp/` submodule is the source of the llama-server
+  `llama.cpp/` submodule is the source of the llama-server
   binary we still use), but no process dedicated to Bonsai-8B as a
   separate model.
 
@@ -268,10 +268,13 @@ After all changes applied and processes restarted:
 
 - **Sleep daemon not running.** Deferred until the document count
   makes dream pressure worthwhile. Low priority.
-- **Bonsai submodule dir rename.** `bonsai-llama.cpp/` still holds
-  the llama.cpp source tree. Renaming it would ripple through the
-  README, `llama-services.sh`, and every committer's working tree
-  (git submodule redirection is painful). Left as-is.
+- ~~**Bonsai submodule dir rename.**~~ Done in a follow-up commit
+  on 2026-04-23: `bonsai-llama.cpp/` → `llama.cpp/`. The rename was
+  straightforward because the `$ORIGIN` RPATH means the built binary
+  relocates without rebuild, and the ripple was smaller than feared
+  (one path in `scripts/llama-services.sh`, two in
+  `experiments/bench-moe-offload/`, a few current-setup references
+  in README — archival docs left at their original path names).
 - **Honcho upstream tool_choice patch.** Local fork still carries the
   `tool_choice: "any" → "required"` normalization. Not upstreamed by
   user decision (see `bottleneck.md` §12).

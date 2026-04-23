@@ -20,7 +20,7 @@ set -euo pipefail
 # ---------- paths ----------
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BENCH_DIR="$ROOT/experiments/bench-moe-offload"
-LLAMA_BUILD="$ROOT/bonsai-llama.cpp/build/bin"
+LLAMA_BUILD="$ROOT/llama.cpp/build/bin"
 BLOB_DIR="/usr/share/ollama/.ollama/models/blobs"
 EMBED_BLOB="$BLOB_DIR/sha256-970aa74c0a90ef7482477cf803618e776e173c007bf957f635f1015bfcfef0e6"
 HONCHO_CONFIG="$ROOT/honcho/config.toml"
