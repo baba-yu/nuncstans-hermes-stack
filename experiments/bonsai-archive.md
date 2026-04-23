@@ -261,3 +261,61 @@ All three of these fork-level fixes are still baked into the gatekeeper submodul
 And one fork-level fix that is **Honcho-on-llama.cpp specific** (still applies to the current stack — the Qwen3.6 llama-server is an OpenAI-compatible llama.cpp endpoint, same as Bonsai was):
 
 4. **`tool_choice = "any"` normalization.** Honcho's dialectic/deriver agents use `tool_choice = "any"` internally as an Anthropic-style synonym for `"required"`; the Anthropic and Gemini backends normalize it, but the upstream OpenAI backend forwards `"any"` unchanged. That works against vLLM (accepts `"any"` as a non-standard extension) and against legacy OpenAI endpoints, but **llama.cpp's OpenAI-compatible server rejects it** with `400 Invalid tool_choice: any`. Every Honcho call that touches tools (dialectic `/chat`, deriver observation extraction, dream consolidation) then dies after three tenacity retries, and from the Hermes side it looks identical to the 60-second stalls you'd see if `llama-server` weren't running at all. The fork (`nuncstans-honcho`, branch `dev`) normalizes `"any"` → `"required"` in `src/llm/backends/openai.py` so the same code path works against all three server families (OpenAI, vLLM, llama.cpp) without any config switch. If you ever replace the submodule with plain upstream Honcho, re-apply that one-liner or dialectic will stop working against the llama.cpp chat server without any obvious smoking gun in the logs.
+
+---
+
+## Archived sections pulled in from other experiments docs
+
+Sections below were originally inside other `experiments/*.md` files but
+assumed the Bonsai+Ollama two-endpoint topology. Moved here to keep
+those parent docs focused on the single-endpoint reality. Source file
+is noted at the top of each block so the provenance is obvious; text is
+preserved verbatim except for the leading heading level.
+
+### From `experiments/maintainer-notes.md` — "Bonsai + CPU is not a usable combination for this stack"
+
+Original second-level header. Applies to the archived two-endpoint
+design where Bonsai-8B was the memory LLM; doesn't apply to the
+single-endpoint stack (which runs qwen3.6 on GPU for everything and
+has no Bonsai process to speak of).
+
+Bonsai-8B ships as a 1-bit quantised GGUF that *looks* like it should run fine on CPU — and it does, in the sense that `llama-cli` will produce text. But with Honcho's deriver and dream on top, CPU Bonsai is **too slow to keep up with real chat**:
+
+- Per-call latency on CPU: 30–160 s for a deriver turn, 20–30 min for a single dream cycle (see `benchmark.md`).
+- Honcho's dream agent tool-loops 20+ times; on CPU a dream blocks the single deriver worker (`WORKERS=1`) for the entire duration.
+- Observations pile up as `pending` in `queue` while dream runs, and contradictory updates ("Alice died" ≠ "Alice lives in Kyoto") stay unresolved because dream never gets a chance to consolidate them before the next fire.
+- On GPU (RTX 5080, CUDA 12.9, `-ngl 99`), the same workloads complete in 1–15 s. That is the only configuration this repo is tuned for.
+
+**If you don't have an NVIDIA GPU**, do not try to make this recipe work by sitting through the CPU times. Instead, drop Bonsai entirely and point Honcho's `[deriver]` / `[dialectic]` / `[summary]` / `[dream]` at a different local memory-adjacent model you can run fast. Candidates:
+
+- A cloud API via the `custom` / `openai` provider slots (OpenRouter, Venice, Together). Defeats the data-sovereignty goal but lets Honcho function.
+- A smaller local model via Ollama — `qwen3.5:4b` or `gemma3:4b` via `PROVIDER = "custom"` and `MODEL = "qwen3.5:4b"`. Lower quality memory reasoning but acceptable for toy scale.
+- vLLM or another GPU inference stack on a LAN machine, pointed to via `LLM_VLLM_BASE_URL`.
+
+Whichever you pick, the hyperparameter section still applies — the scaffold defaults assume a fast backend and will look the same kind of broken if you pick a slow one.
+
+### From `experiments/maintainer-notes.md` — "Why dream still lives on Bonsai, not the Ollama chat model"
+
+Original second-level header. Made sense when dream ran on a separate
+Bonsai-8B process and chat ran on Ollama. In the single-endpoint stack
+dream runs on the same qwen3.6 `llama-server` as chat, so the whole
+premise is gone.
+
+We tried routing dream to Ollama (`qwen3.5:9b`) because Ollama already owns the GPU for chat. That produced hallucinated observations during the consolidation tool-loop (a fake employer, a made-up age field) because general chat models weren't trained to discipline themselves inside `search_memory` / `create_observations` / `delete_observations` loops. Bonsai was fine-tuned for exactly that. Keeping dream on Bonsai (separate `llama-server` process) means the two workloads coexist on VRAM via separate process address spaces, which both Ollama and `llama-server` handle without special coordination.
+
+### From `experiments/memory-consolidation.md` — "Why dream runs on Bonsai (not the chat model)"
+
+Original second-level header inside the sleep-daemon doc. Same premise
+as the maintainer-notes section above but worded as a forward-looking
+design justification. The single-endpoint config collapses the two
+models into one and the "disciplined vs general chat" framing is
+moot.
+
+The scaffold wires dream to Bonsai and we keep it that way. Why not send dream to Ollama / the chat model to free Bonsai?
+
+- **Bonsai-8B is trained for this task.** It's a Neuromancer-derivative fine-tune built specifically for observation-level memory reasoning; its tool-call discipline on `search_memory` / `create_observations` / `delete_observations` is how dream resolves contradictions cleanly.
+- **General chat models hallucinate during consolidation.** We tried routing dream to `qwen3.5:9b` (the Ollama chat model) and dream started inventing facts during the tool loop — a fake employer, a made-up age field — rather than reconciling the observations actually in memory. Any general-purpose chat model does this to some degree; the consolidation task is too close to "fill in plausible details."
+- **Separate process, shared VRAM.** Bonsai's `llama-server` and Ollama are independent processes. Both sit in the same 16 GiB VRAM on the RTX 5080 (Bonsai ~7.6 GiB + chat model ~8 GiB). No GPU-level coordination is needed — each process manages its own context and streams separately. If the user types while a dream is mid-flight, Ollama still answers promptly on its model and Bonsai continues on its own.
+- **Idle-firing is still a nice-to-have.** Honcho cancels pending dreams whenever a user message arrives (`cancel_dreams_for_observed` in `src/deriver/enqueue.py`), so dreams naturally batch during quiet moments. On GPU this matters less (a dream ends in ~14 s so even an interruption is short), but the cancel behaviour is still useful to avoid redundant consolidation right before fresh observations land.
+
+In short: dream runs on Bonsai because it's the right model for the task, and on GPU the cost is low enough that it can fire whenever Honcho's scheduler (or the sleep daemon) decides it's warranted.

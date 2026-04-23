@@ -4,22 +4,7 @@ This file is extracted from the hermes-stack top-level README to keep the setup 
 
 Things the next person (you, six months from now, or someone new coming to this repo) should know. These are not bugs — they are hard requirements or design decisions that got made during bring-up, documented here so nobody re-learns them painfully.
 
-## Bonsai + CPU is not a usable combination for this stack
-
-Bonsai-8B ships as a 1-bit quantised GGUF that *looks* like it should run fine on CPU — and it does, in the sense that `llama-cli` will produce text. But with Honcho's deriver and dream on top, CPU Bonsai is **too slow to keep up with real chat**:
-
-- Per-call latency on CPU: 30–160 s for a deriver turn, 20–30 min for a single dream cycle (see `benchmark.md`).
-- Honcho's dream agent tool-loops 20+ times; on CPU a dream blocks the single deriver worker (`WORKERS=1`) for the entire duration.
-- Observations pile up as `pending` in `queue` while dream runs, and contradictory updates ("Alice died" ≠ "Alice lives in Kyoto") stay unresolved because dream never gets a chance to consolidate them before the next fire.
-- On GPU (RTX 5080, CUDA 12.9, `-ngl 99`), the same workloads complete in 1–15 s. That is the only configuration this repo is tuned for.
-
-**If you don't have an NVIDIA GPU**, do not try to make this recipe work by sitting through the CPU times. Instead, drop Bonsai entirely and point Honcho's `[deriver]` / `[dialectic]` / `[summary]` / `[dream]` at a different local memory-adjacent model you can run fast. Candidates:
-
-- A cloud API via the `custom` / `openai` provider slots (OpenRouter, Venice, Together). Defeats the data-sovereignty goal but lets Honcho function.
-- A smaller local model via Ollama — `qwen3.5:4b` or `gemma3:4b` via `PROVIDER = "custom"` and `MODEL = "qwen3.5:4b"`. Lower quality memory reasoning but acceptable for toy scale.
-- vLLM or another GPU inference stack on a LAN machine, pointed to via `LLM_VLLM_BASE_URL`.
-
-Whichever you pick, the hyperparameter section still applies — the scaffold defaults assume a fast backend and will look the same kind of broken if you pick a slow one.
+> **Note on archived Bonsai-era sections.** Two sections that used to live in this file — "Bonsai + CPU is not a usable combination for this stack" and "Why dream still lives on Bonsai, not the Ollama chat model" — assumed the old two-endpoint Bonsai-8B + Ollama topology. They have been moved verbatim into `experiments/bonsai-archive.md` (see the "Archived sections pulled in from other experiments docs" tail) so the design-rationale record stays intact for anyone rebuilding that design on different hardware.
 
 ## CUDA 12.9 is the hard upper bound on current WSL2
 
@@ -38,19 +23,19 @@ This will eventually fix itself when Microsoft ships a libdxcore with the missin
 
 ## This build is not redistributable
 
-The Bonsai `llama-server` binary we compile here links against NVIDIA's cuBLAS / cuBLASLt / cuFFT / cuSOLVER libraries from the CUDA toolkit. NVIDIA's CUDA redistribution license (see the `EULA` shipped with the toolkit) limits redistributing those libraries as static or dynamically-linked copies. The practical implication:
+The `llama-server` binary we compile here links against NVIDIA's cuBLAS / cuBLASLt / cuFFT / cuSOLVER libraries from the CUDA toolkit. NVIDIA's CUDA redistribution license (see the `EULA` shipped with the toolkit) limits redistributing those libraries as static or dynamically-linked copies. The practical implication:
 
-- Don't publish a prebuilt `bonsai-llama.cpp` binary as part of a release artifact. Each operator needs to install CUDA 12.x and compile locally (which is what this README walks through).
-- If you want distributable prebuilts, either use the upstream `llama.cpp` release's Vulkan variant (lower perf, no CUDA license, but no Blackwell-specific optimisations either) or ship Docker images that layer on `nvidia/cuda` base images — those are licensed for that redistribution path.
+- Don't publish a prebuilt `llama-server` binary from the `llama.cpp/build/bin/` tree as part of a release artifact. Each operator needs to install CUDA 12.x and compile locally (which is what the README walks through).
+- If you want distributable prebuilts, either use upstream `llama.cpp`'s release Vulkan variant (lower perf, no CUDA license, but no Blackwell-specific optimisations either) or ship Docker images that layer on `nvidia/cuda` base images — those are licensed for that redistribution path.
 - The local CUDA paths (`/usr/local/cuda-12.9`) and `LD_LIBRARY_PATH=/usr/local/cuda/lib64` expectations assume the operator did Step 1's "Prerequisites" block — skipping that will produce confusing linker errors at `llama-server` startup.
-
-## Why dream still lives on Bonsai, not the Ollama chat model
-
-We tried routing dream to Ollama (`qwen3.5:9b`) because Ollama already owns the GPU for chat. That produced hallucinated observations during the consolidation tool-loop (a fake employer, a made-up age field) because general chat models weren't trained to discipline themselves inside `search_memory` / `create_observations` / `delete_observations` loops. Bonsai was fine-tuned for exactly that. Keeping dream on Bonsai (separate `llama-server` process) means the two workloads coexist on VRAM via separate process address spaces, which both Ollama and `llama-server` handle without special coordination.
 
 ## pgvector schema width is pinned to the embedding model
 
-The scaffold's `Vector(1536)` is hardcoded across three migrations (`a1b2c3d4e5f6_initial_schema.py`, `917195d9b5e9_add_messageembedding_table.py`, `119a52b73c60_support_external_embeddings.py`) and `src/models.py`. Step 3's `sed` rewrites them to `Vector(768)` for `nomic-embed-text`. If you swap the embedding model to anything that outputs a different dimension, you must redo the sed and `docker compose down -v` before `up -d --build` — pgvector does not auto-migrate column width and the embedding insert will silently keep rolling back until somebody traces the `expected N dimensions, not M` error in `api` logs.
+Upstream's `Vector(1536)` (matching OpenAI's `text-embedding-3-small`) is hardcoded in the initial schema and carried through subsequent migrations. For this stack, where `nomic-embed-text` produces 768-dim vectors, the fork ships a follow-up migration `h8i9j0k1l2m3_alter_vector_dim_to_768.py` that alters `documents.embedding` and `message_embeddings.embedding` to `Vector(768)` after upstream's schema lands. `[vector_store] MIGRATED = true` in `config.toml` tells `src/config.py`'s relaxed validator to accept non-1536 dims once that migration has run.
+
+If you ever swap the embedding model to anything that outputs a different dimension (other than 1536 or 768), you need a new migration that alters the column to the new width and `docker compose down -v && up -d --build` to rebuild the volume from scratch — pgvector does not auto-migrate column width, and any prior schema survives a plain `up -d` because the data volume is preserved. The embedding insert will silently keep rolling back with `expected N dimensions, not M` in the `api` logs until the migration lands.
+
+(An earlier version of this note described a `sed`-based rewrite of the scaffold schema. That was the procedure before the fork's migration was in place; it is superseded by the migration-based approach above.)
 
 ## Honcho's `config.toml` integer fields are strict
 
