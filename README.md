@@ -73,7 +73,8 @@ flowchart LR
 
         subgraph Scripts["scripts/"]
             LlamaServices["llama-services.sh<br/>start / stop / status"]
-            SleepDaemon["sleep_daemon.py<br/>pressure + idle monitor"]
+            Gatekeeper["gatekeeper_daemon.py<br/>queue classifier"]
+            SleepDaemon["sleep_daemon.py<br/>pressure + idle monitor (optional)"]
         end
     end
 
@@ -82,15 +83,18 @@ flowchart LR
     Deriver -- "deriver / dialectic /<br/>summary / dream" --> Chat
     HonchoAPI -- "dialectic" --> Chat
     HonchoAPI -- "embeddings" --> Embed
+    Gatekeeper -- "classify pending rows" --> PG
+    Gatekeeper -- "classify via LLM" --> Chat
     SleepDaemon -- "nap triggers + session injects" --> HonchoAPI
     LlamaServices -.manages.-> Chat
     LlamaServices -.manages.-> Embed
+    LlamaServices -.manages.-> Gatekeeper
 
     classDef gpu fill:#1e5bbf,stroke:#0f3a7a,color:#fff
     classDef svc fill:#c17a1a,stroke:#7a4d10,color:#fff
     classDef app fill:#6a3aa0,stroke:#3e2261,color:#fff
     class Chat,Embed gpu
-    class HonchoAPI,Deriver,PG,Redis,SleepDaemon,LlamaServices svc
+    class HonchoAPI,Deriver,PG,Redis,Gatekeeper,SleepDaemon,LlamaServices svc
     class Hermes app
 ```
 
@@ -101,7 +105,8 @@ flowchart LR
 | Chat `llama-server` (:8080) | `scripts/llama-services.sh` → `llama-server -hf unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL` with MoE expert offload (`-ot "ffn_(up\|down\|gate)_exps=CPU"`) and `--reasoning off` | GPU attention + KV + shared projections ~7.5 GiB VRAM; experts on CPU / DDR5 | Hermes main inference **and** Honcho deriver / dialectic / summary / dream |
 | Embedding `llama-server` (:8081) | same script → `llama-server --embeddings` against the nomic-embed-text GGUF | GPU ~0.5 GiB VRAM | Honcho embeddings. Aliased as `openai/text-embedding-3-small` so Honcho's hardcoded name resolves locally |
 | Honcho | api + deriver + Postgres (pgvector) + Redis via Docker Compose | CPU / RAM | Conversation memory and user modelling |
-| sleep_daemon | `python3 scripts/sleep_daemon.py` (systemd user service) | — | Detects idle or pending-queue pressure, fires dream + injects English system messages into the active session |
+| Gatekeeper daemon | `python3 scripts/gatekeeper_daemon.py` (started by `llama-services.sh start` after chat + embed come up) | — | Classifies each pending representation queue row against the A/B literalness axes and importance; promotes to `ready` (deriver picks up) or demotes. Uses `:8080` as the classifier LLM via `GK_LLM_URL` / `GK_LLM_MODEL`. |
+| sleep_daemon (optional) | `python3 scripts/sleep_daemon.py` (systemd user service) | — | Detects idle or pending-queue pressure, fires dream + injects English system messages into the active session. Not started by `llama-services.sh`; bring up by hand or via systemd when observation count makes consolidation worthwhile. |
 | Hermes Agent | `hermes` CLI (also serves an OpenAI-compatible HTTP endpoint) | — | Orchestration |
 
 **Why a single chat endpoint serves both Hermes chat and Honcho's memory loops:** the MoE expert-tensor offload trick (`-ot ffn_(up|down|gate)_exps=CPU`) keeps attention + shared projections on the GPU while pushing the ~22 GiB of MoE FFN expert tensors to host RAM. Because Qwen3.6 is an A3B architecture (~3 B active parameters per token), the CPU side only executes a 3 B-scale matmul per token, not 36 B — the "nominally CPU" experts act like a tiny dense model on CPU. Combined with `--reasoning off` (which neutralizes the qwen3 thinking-token leak documented at [llama.cpp#20099](https://github.com/ggml-org/llama.cpp/issues/20099)), the chat server finishes a representative 4 k-prompt / 200-token Hermes turn in ~5.5 s isolated, ~12 s when Honcho's deriver is hitting it concurrently — interactive even under load.
@@ -258,10 +263,11 @@ llama-server -m "$EMBED_BLOB" --host 0.0.0.0 --port 8081 \
 # chat server — Qwen3.6-35B-A3B with L6 config from bench-moe-offload
 llama-server -hf unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL \
   --host 0.0.0.0 --port 8080 \
-  -c 65536 -fa on -ctk q8_0 -ctv q8_0 \
+  -c 131072 -fa on -ctk q8_0 -ctv q8_0 \
   --jinja -ngl 99 \
   -ot "ffn_(up|down|gate)_exps=CPU" \
   --reasoning off \
+  --parallel 2 \
   --alias qwen3.6-test
 ```
 
@@ -269,9 +275,10 @@ Key flags, briefly:
 
 - `-ngl 99 -ot "ffn_(up|down|gate)_exps=CPU"` — all layers on GPU except the MoE expert FFN tensors, which go to CPU. Gets attention + shared projections onto the GPU (where bandwidth is 3× CPU's) while keeping the 22 GiB of expert weights off-VRAM.
 - `--reasoning off` — neutralizes qwen3's thinking-token leak ([llama.cpp#20099](https://github.com/ggml-org/llama.cpp/issues/20099)). Without this, every token in the completion budget is consumed by invisible reasoning and `message.content` comes back empty.
-- `-c 65536` — Hermes sessions can accumulate 4–13k-token prompts (memory context + tool schemas + dialectic result); 65k gives ~5× headroom. Qwen3.6 was trained with 262k, so 65k is well inside its native range.
+- `-c 131072` with `--parallel 2` — total KV budget is split evenly across slots, so each of the two slots gets 65 536 tokens. Hermes sessions can accumulate 4–13k-token prompts (memory context + tool schemas + dialectic result); 65k per slot gives ~5× headroom. Qwen3.6 was trained with 262 144, so the total is well inside its native range. Two slots let Hermes's own chat and Honcho's deriver be in flight concurrently without either one evicting the other's KV.
 - `-fa on -ctk q8_0 -ctv q8_0` — flash attention on, KV cache quantized to q8_0. Halves KV VRAM without visible quality loss at this model size.
 - `--jinja` — required for tool calling; the model's chat template has `{% if tools %}` and only the Jinja path honors it.
+- `--parallel 2` — two concurrent inference slots. See the note above about KV partitioning. One slot serves Hermes's user-facing chat, the other handles Honcho's deriver / dialectic calls when they fire asynchronously mid-turn.
 - `--alias qwen3.6-test` / `--alias openai/text-embedding-3-small` — the logical model names Honcho's config references. If you change these, update `honcho/config.toml` to match.
 
 Logs and PIDs land under `~/.local/state/hermes-stack/` (`chat-server.log`, `chat-server.pid`, and equivalents for `embed-server`).
@@ -341,7 +348,7 @@ PENDING_THRESHOLD=5 TOKEN_THRESHOLD=500 IDLE_TIMEOUT_MINUTES=5 \
 #### Other values worth watching (less critical)
 
 - `[deriver.model_config] max_output_tokens` (scaffold 4096 → **1500**): tool loops accumulate output; `1500` keeps the cumulative loop well inside even a modest context window. Post-refactor this lives inside the nested `[X.model_config]` block, not on the flat `[deriver]` table.
-- `[deriver] MAX_INPUT_TOKENS` (scaffold 23000 → **8000**): flat top-level knob, still applies. 8k leaves plenty of room on the 65k chat-server context.
+- `[deriver] MAX_INPUT_TOKENS` (scaffold 23000 → **8000**): flat top-level knob, still applies. 8k leaves plenty of room on the 65k per-slot context (chat server runs `-c 131072 --parallel 2`).
 - `[dream] MAX_TOOL_ITERATIONS` (scaffold 20 → **3**): on the current GPU build each iteration completes quickly, so the scaffold default 20 is fine for deeper consolidation. `3` keeps it fastest.
 - `[dream] MIN_HOURS_BETWEEN_DREAMS` (scaffold 8 → **1**): Honcho validates this as an integer, so fractional hours (0.5) are rejected. `1` hour is the shortest legal value.
 - Fallback model (**leave unset**): the new `ConfiguredModelSettings` schema supports a nested `fallback = { transport, model, overrides }` on each `[X.model_config]` block. In this local-only setup there's no second provider — don't add one, or retries after a transient llama-server error will silently bounce to an unrelated endpoint. (The old flat `BACKUP_PROVIDER` / `BACKUP_MODEL` keys have been removed from the schema entirely; if you ported them over from an older `config.toml`, the new code silently ignores them.)
@@ -599,6 +606,7 @@ Easiest lasting fix: add `COMPOSE_PROJECT_NAME=honcho-gatekeeper` to `honcho/.en
 ./scripts/llama-services.sh status
 ./scripts/llama-services.sh logs chat       # tail ~/.local/state/hermes-stack/chat-server.log
 ./scripts/llama-services.sh logs embed      # tail ~/.local/state/hermes-stack/embed-server.log
+./scripts/llama-services.sh logs gk         # tail ~/.local/state/hermes-stack/gatekeeper.log
 
 # Honcho (data survives in the named volumes)
 cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose down
@@ -728,5 +736,5 @@ See `test/uat/plan/PLAN.md` for scenario details. See `experiments/uat-suite.md`
 - **Embeddings fail with `model "openai/text-embedding-3-small" not found`** — the embed `llama-server` is not running, or was started without `--alias openai/text-embedding-3-small`. Check `./scripts/llama-services.sh status` and `curl -s http://localhost:8081/v1/models`.
 - **Embedding dimension mismatch (`expected 1536 dimensions, not 768`)** — the fork's `h8i9j0k1l2m3` migration flips the pgvector columns to `Vector(768)`, and `[vector_store] MIGRATED = true` tells the relaxed validator to accept non-1536 dims. If you're hitting this, either the migration didn't run (check `docker compose logs api | grep alembic`) or a stale 1536-width volume survived from an earlier attempt — `docker compose down -v` then `up -d --build` to rebuild the schema. Do not `sed` `Vector(1536)` in `src/models.py` by hand; the migration is the supported path.
 - **`the input length exceeds the context length` (HTTP 400 from the embed server)** — honcho's `EMBEDDING.MAX_INPUT_TOKENS` default (8192) is higher than `nomic-embed-text`'s 2048-token native context. Set `[embedding] MAX_INPUT_TOKENS = 2048` in `config.toml` so the chunker splits longer messages.
-- **Deriver hangs and the chat server log shows `failed to find free space in the KV cache`** — `llama-server`'s default parallelism combined with Honcho's long tool-call prompts can outrun the allocated KV cache. Restart with `--parallel 1` so one request gets the full context window. Edit `scripts/llama-services.sh` to add `--parallel 1` to `start_chat` if this keeps recurring.
+- **Deriver hangs and the chat server log shows `failed to find free space in the KV cache`** — a single request outgrew its per-slot KV budget. `scripts/llama-services.sh` ships with `-c 131072 --parallel 2`, meaning each slot gets 65 536 tokens. If Honcho's tool-call loop builds a prompt larger than that, drop `--parallel` to `1` so one request gets the full 131 072 tokens — edit `start_chat` in the script. Trade-off: you lose the Hermes/deriver concurrency slot split, so long turns may serialize on each other.
 - **Hermes tool calls fail** — the main chat model does not support function calling. Qwen3.6-A3B advertises tools but needs `--jinja` on the llama-server side for the chat template to honor the `{% if tools %}` block. Verify the process was launched with `--jinja`.
