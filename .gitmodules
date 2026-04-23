@@ -1,6 +1,6 @@
 [submodule "honcho"]
 	path = honcho
-	url = https://github.com/baba-yu/nunc-honcho.git
+	url = https://github.com/baba-yu/nuncstans-honcho.git
 	branch = dev
 [submodule "llama.cpp"]
 	path = llama.cpp
