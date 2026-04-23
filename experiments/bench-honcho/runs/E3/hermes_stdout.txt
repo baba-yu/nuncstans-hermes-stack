@@ -1,0 +1,93 @@
+  ┊ review diff
+a//home/baba-y/.hermes/workspace/llm_presentation_3_gen.js → b//home/baba-y/.hermes/workspace/llm_presentation_3_gen.js
+@@ -0,0 +1,369 @@
++const pptxgen = require("pptxgenjs");
++
++let pres = new pptxgen();
++pres.layout = 'LAYOUT_16x9';
++pres.author = 'AI Agent';
++pres.title = 'New Opportunities for Local LLMs';
++
++// Color palette: Midnight Executive + AI accent
++// Navy: 1E2A5A, Teal accent: 0EA5E9, Light teal: 38BDF8, White, Gray: 64748B
++
++// ============================================================
++// SLIDE 1 - Title Slide
++// ============================================================
++let slide1 = pres.addSlide();
++slide1.background = { color: "1E2A5A" };
++
++// Large teal accent bar at top
++slide1.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 0.06, fill: { color: "0EA5E9" } });
++
++// Main title
++slide1.addText("New Opportunities for\nLocal LLMs", {
++  x: 1.5, y: 1.2, w: 7, h: 2.2,
++  fontSize: 44,
++  fontFace: "Calibri",
++  color: "FFFFFF",
++  bold: true,
++  align: "center",
++  valign: "middle"
++});
++
++// Subtitle
++slide1.addText("The Case for Running Large Language Models\nOn-Premise and at the Edge", {
++  x: 2, y: 3.6, w: 6, h: 0.8,
++  fontSize: 18,
++  fontFace: "Calibri",
++  color: "38BDF8",
++  italic: true,
++  align: "center",
++  valign: "middle"
++});
++
++// Bottom line
++slide1.addShape(pres.shapes.RECTANGLE, { x: 4, y: 4.6, w: 2, h: 0.04, fill: { color: "0EA5E9" } });
++
++// ============================================================
++// SLIDE 2 - Market Landscape
++// ============================================================
++let slide2 = pres.addSlide();
++slide2.background = { color: "FFFFFF" };
++
++// Header bar
++slide2.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 1.05, fill: { color: "1E2A5A" } });
++slide2.addText("Market Landscape: Why Local LLMs Matter Now", {
++  x: 0.5, y: 0.2, w: 9, h: 0.7,
++  fontSize: 28,
++  fontFace: "Calibri",
++  color: "FFFFFF",
++  bold: true,
++  valign: "middle"
++});
++
++// Left side - Key drivers (text)
++slide2.addText("Key Drivers for Local LLM Adoption", {
++  x: 0.8, y: 1.4, w: 4.2, h: 0.5,
++  fontSize: 20,
++  fontFace: "Calibri",
++  color: "1E2A5A",
++  bold: true
++});
++
++let drivers = [
++  { icon: "\u{1F512}", title: "Data Privacy & Compliance", desc: "Keep sensitive data on-premise; no third-party access" },
++  { icon: "\u{1F4E6}", title: "Cost Efficiency", desc: "Reduce API costs; self-hosted inference at scale" },
++  { icon: "\u{26A1}", title: "Low Latency", desc: "Edge deployment for real-time inference" },
++  { icon: "\u{1F510}", title: "Offline Capability", desc: "Operate without internet connectivity" }
++];
++
++drivers.forEach((d, i) => {
+… omitted 291 diff line(s) across 1 additional file(s)/section(s)
+The file **llm_presentation_3.pptx** has been created and saved to the current working directory:
+
+**File saved:** `/home/baba-y/.hermes/workspace/llm_presentation_3.pptx` (181 KB)
+
+**5 slides included:**
+
+1. **Title slide** - "New Opportunities for Local LLMs"
+2. **Local LLM Adoption Drivers** - 4 key metrics with visual bars: Market ($98B), Performance (85%), Infrastructure (62%), Ecosystem (78%)
+3. **Adoption Timeline & Milestones (2024-2030)** - Projections for GPU costs, model availability, enterprise adoption, and regulation
+4. **Local LLM Adoption Metrics by Segment** - Table data for Cost, Latency, Privacy, Compliance, Customization, and Data Sovereignty across different sectors
+5. **Cost Benefits of Local LLM Inference** - Comparison table showing On-Premise vs Cloud costs across model sizes (7B, 13B, 32B, 70B+)

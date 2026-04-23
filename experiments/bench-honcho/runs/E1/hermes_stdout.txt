@@ -1,0 +1,104 @@
+  ┊ review diff
+a//home/baba-y/llm_deck.js → b//home/baba-y/llm_deck.js
+@@ -0,0 +1,331 @@
++const pptxgen = require("pptxgenjs");
++
++let pres = new pptxgen();
++pres.layout = 'LAYOUT_16x9';
++pres.author = 'Yuki';
++pres.title = 'New Opportunities for Local LLMs';
++
++const palette = {
++  /* Ocean Gradient */
++  dark:  '065A82',
++  teal:  '1C7293',
++  night: '21295C',
++  light: 'F7FAFC',
++  white: 'FFFFFF',
++  accent:'02C39A',
++  slate: '475569',
++  muted: '94A3B8',
++  ice:   'E0F2F1',
++  steel: '186B6B',
++};
++
++/* ── Helper: shadow ────────────────────────────── */
++const shadow = () => ({ type: "outer", blur: 4, offset: 1, angle: 135, color: "000000", opacity: 0.18 });
++
++/* ── Slide 1 — Title (dark) ────────────────────── */
++{
++  const s = pres.addSlide();
++  s.background = { color: palette.dark };
++
++  // subtle top accent bar
++  s.addShape(pres.shapes.RECTANGLE, {
++    x: 0, y: 0, w: pres.layout.w, h: 0.06,
++    fill: { color: palette.accent },
++  });
++
++  // large centered rectangle with slight transparency
++  s.addShape(pres.shapes.RECTANGLE, {
++    x: 1.5, y: 1.2, w: 7.0, h: 2.8,
++    fill: { color: palette.teal },
++    shadow: shadow(),
++  });
++
++  s.addText("New Opportunities\nfor Local LLMs", {
++    x: 1.8, y: 1.5, w: 6.6, h: 2.0,
++    fontSize: 40, fontFace: "Georgia", color: palette.white,
++    bold: true, align: "center", valign: "middle", margin: 0,
++  });
++
++  s.addText("Running powerful models on your own hardware — cost, privacy, and independence\nreimagined", {
++    x: 2.0, y: 3.5, w: 6.0, h: 0.6,
++    fontSize: 16, fontFace: "Georgia", color: palette.muted,
++    italic: true, align: "center", valign: "middle", margin: 0,
++  });
++
++  s.addText("April 2026", {
++    x: 4.0, y: 4.1, w: 2.0, h: 0.4,
++    fontSize: 14, fontFace: "Arial", color: palette.accent,
++    align: "center", valign: "middle", margin: 0,
++  });
++}
++
++/* ── Slide 2 — Landscape Today (light) ────────── */
++{
++  const s = pres.addSlide();
++  s.background = { color: palette.light };
++
++  // accent left bar
++  s.addShape(pres.shapes.RECTANGLE, {
++    x: 0, y: 0, w: 0.08, h: pres.layout.h,
++    fill: { color: palette.teal },
++  });
++
++  s.addText("The Local LLM Landscape Today", {
++    x: 0.5, y: 0.4, w: 9.0, h: 0.7,
++    fontSize: 32, fontFace: "Georgia", color: palette.night, bold: true, margin: 0,
++  });
++
++  s.addText("Key market context driving local inference", {
+… omitted 253 diff line(s) across 1 additional file(s)/section(s)
+
+┌──────────────────────────────────────────────────────────┐
+│  🔐 SUDO PASSWORD REQUIRED                              │
+├──────────────────────────────────────────────────────────┤
+│  Enter password below (input is hidden), or:            │
+│    • Press Enter to skip (command fails gracefully)     │
+│    • Wait 45s to auto-skip                           │
+└──────────────────────────────────────────────────────────┘
+
+  Password (hidden): 
+  ⏭ Skipped - continuing without sudo
+
+The .pptx file has been generated and the text content verified successfully. However, I'm hitting a roadblock with visual QA:
+
+*   The presentation file **llm_presentation_1.pptx** is saved in `/home/baba-y` (the current working directory).
+*   I **cannot generate image previews** because LibreOffice and `pdftoppm` aren't installed in this sandbox environment — and I don't have `sudo` access to install them.
+
+You can check the visual quality yourself by:
+1.  Opening `llm_presentation_1.pptx` in PowerPoint or Google Slides
+2.  Or asking me to help install the dependencies if you have sudo access
+
+**What would you like to do?**

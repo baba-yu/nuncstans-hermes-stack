@@ -1,0 +1,82 @@
+  ┊ review diff
+a/create_deck.js → b/create_deck.js
+@@ -0,0 +1,376 @@
++const pptxgen = require("pptxgenjs");
++const React = require("react");
++const ReactDOMServer = require("react-dom/server");
++const sharp = require("sharp");
++
++// Icon libraries
++const { FaBrain, FaChartLine, FaCpu, FaGlobeAmericas, FaShieldAlt } = require("react-icons/fa");
++
++function renderIconSvg(IconComponent, color = "#000000", size = 256) {
++  return ReactDOMServer.renderToStaticMarkup(
++    React.createElement(IconComponent, { color, size: String(size) })
++  );
++}
++
++async function iconToBase64Png(IconComponent, color, size = 256) {
++  const svg = renderIconSvg(IconComponent, color, size);
++  const pngBuffer = await sharp(Buffer.from(svg)).png().toBuffer();
++  return "image/png;base64," + pngBuffer.toString("base64");
++}
++
++async function main() {
++  let pres = new pptxgen();
++  pres.layout = "LAYOUT_16x9";
++  pres.author = "Yuki";
++  pres.title = "New Opportunities for Local LLMs";
++
++  // ---- Helpers ----
++  const makeShadow = () => ({ type: "outer", blur: 8, offset: 3, angle: 135, color: "000000", opacity: 0.12 });
++
++  // Color palette: Deep indigo / midnight with neon teal accent (tech/AI feel)
++  const BG_DARK = "0F172A";    // dark navy
++  const BG_CARD = "1E293B";    // card background
++  const TEAL = "2DD4BF";        // primary accent
++  const TEAL_DARK = "14B8A6";  // secondary accent
++  const WHITE = "F8FAFC";      // light text
++  const MUTE = "94A3B8";       // muted text
++  const GOLD = "FBBF24";       // warm accent for highlights
++  const CORAL = "FB7185";      // secondary accent
++
++  // ---- ICONS (pre-render once) ----
++  const iconBrain = await iconToBase64Png(FaBrain, TEAL);
++  const iconChart = await iconToBase64Png(FaChartLine, TEAL);
++  const iconCpu = await iconToBase64Png(FaCpu, GOLD);
++  const iconGlobe = await iconToBase64Png(FaGlobeAmericas, TEAL_DARK);
++  const iconShield = await iconToBase64Png(FaShieldAlt, CORAL);
++
++  // ==================== SLIDE 1: TITLE ====================
++  const s1 = pres.addSlide();
++  s1.background = { color: BG_DARK };
++
++  // Top accent bar
++  s1.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 0.06, fill: { color: TEAL } });
++
++  // Decorative large circle (teal, low opacity) for depth
++  s1.addShape(pres.shapes.OVAL, { x: -1.5, y: -1.5, w: 5, h: 5, fill: { color: TEAL, transparency: 92 } });
++  s1.addShape(pres.shapes.OVAL, { x: 9.5, y: 4.5, w: 4, h: 4, fill: { color: TEAL, transparency: 90 } });
++
++  // Central icon circle
++  s1.addShape(pres.shapes.OVAL, { x: 4.25, y: 1.0, w: 1.5, h: 1.5, fill: { color: TEAL }, shadow: makeShadow() });
++  s1.addImage({ data: iconBrain, x: 4.5, y: 1.3, w: 0.9, h: 0.9 });
++
++  // Title
++  s1.addText("New Opportunities\nfor Local LLMs", {
++    x: 1.5, y: 3.0, w: 7, h: 1.4, fontSize: 38, fontFace: "Georgia",
++    color: WHITE, bold: true, align: "center", valign: "middle"
++  });
++
++  // Subtitle
++  s1.addText("Why running AI locally is no longer optional", {
++    x: 2.5, y: 4.4, w: 5, h: 0.5, fontSize: 16, fontFace: "Calibri",
++    color: MUTE, align: "center", italics: true
++  });
++
++  // Bottom teal line
++  s1.addShape(pres.shapes.LINE, { x: 4, y: 5.1, w: 2, h: 0, line: { color: TEAL, width: 2 } });
++
++  // ==================== SLIDE 2: WHY LOCAL NOW ====================
++  const s2 = pres.addSlide();
+… omitted 298 diff line(s) across 1 additional file(s)/section(s)

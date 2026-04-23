@@ -1,0 +1,28 @@
+{
+  "experiment": 5,
+  "honcho_variant": "ollama-35b",
+  "inference_model": "qwen3.6:35b",
+  "bonsai": {
+    "parallel": 1,
+    "ctx": 16384,
+    "needed": false
+  },
+  "ollama": {
+    "overhead": 0,
+    "max_loaded": 1
+  },
+  "wall_seconds": 1801.418194519,
+  "drain_seconds": 0.379330155,
+  "total_seconds": 1801.797524674,
+  "deriver_queue_rows": 0,
+  "observations_created": 0,
+  "exit_code": 124,
+  "pptx": {
+    "ok": true,
+    "path": "/home/baba-y/nuncstans-hermes-stack/llm_presentation_5.pptx",
+    "slides": 5,
+    "size": 160894,
+    "method": "python-pptx"
+  },
+  "start_iso": "2026-04-21T03:58:04-07:00"
+}

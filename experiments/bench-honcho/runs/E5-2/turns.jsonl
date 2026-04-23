@@ -1,0 +1,5 @@
+{"id": 1, "label": "self_intro", "timeout_s": 600, "wall_seconds": 533.338325923, "exit_code": 0, "session_id": "20260421_144101_78fae9", "stdout_bytes": 999, "stderr_bytes": 36}
+{"id": 2, "label": "info_1", "timeout_s": 1200, "wall_seconds": 200.799503481, "exit_code": 0, "session_id": "20260421_144101_78fae9", "stdout_bytes": 1796, "stderr_bytes": 36}
+{"id": 3, "label": "info_2", "timeout_s": 1200, "wall_seconds": 193.721028748, "exit_code": 0, "session_id": "20260421_144101_78fae9", "stdout_bytes": 2149, "stderr_bytes": 36}
+{"id": 4, "label": "info_3", "timeout_s": 1200, "wall_seconds": 140.986342489, "exit_code": 0, "session_id": "20260421_144101_78fae9", "stdout_bytes": 2409, "stderr_bytes": 36}
+{"id": 5, "label": "create_pptx", "timeout_s": 3600, "wall_seconds": 2519.317304691, "exit_code": 0, "session_id": "20260421_144101_78fae9", "stdout_bytes": 6894, "stderr_bytes": 36}

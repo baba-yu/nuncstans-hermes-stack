@@ -1,0 +1,30 @@
+{
+  "experiment": 3,
+  "honcho_variant": "ollama-9b",
+  "inference_model": "qwen3.6:35b",
+  "bonsai": {
+    "parallel": 1,
+    "ctx": 16384,
+    "needed": false
+  },
+  "ollama": {
+    "overhead": 0,
+    "max_loaded": 2
+  },
+  "wall_seconds": 1186.340127139,
+  "drain_seconds": 244.26310221,
+  "total_seconds": 1430.603229349,
+  "deriver_queue_rows": 2,
+  "observations_created": 0,
+  "exit_code": 0,
+  "pptx": {
+    "ok": true,
+    "path": "/home/baba-y/nuncstans-hermes-stack/experiments/bench-honcho/runs/E3/llm_presentation_3.pptx",
+    "slides": 5,
+    "size": 181166,
+    "method": "python-pptx"
+  },
+  "start_iso": "2026-04-21T03:02:04-07:00",
+  "pptx_post_fix": true,
+  "pptx_fix_note": "Model emitted 2 U+001F bytes in slide3.xml where it intended U+FE0F (emoji variation selector). Stripped invalid control chars; verified 5 slides parse cleanly."
+}

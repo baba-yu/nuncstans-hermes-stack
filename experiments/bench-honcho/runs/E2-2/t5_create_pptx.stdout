@@ -1,0 +1,201 @@
+↻ Resumed session 20260421_102519_915543 (4 user messages, 14 total messages)
+  ┊ review diff
+a//tmp/pptx/llm_presentation_2.js → b//tmp/pptx/llm_presentation_2.js
+@@ -0,0 +1,511 @@
++const pptxgen = require("pptxgenjs");
++
++let pres = new pptxgen();
++pres.layout = "LAYOUT_16x9";
++pres.author = "Yuki";
++pres.title = "New Opportunities for Local LLMs";
++
++// Color palette: Deep tech theme
++// Primary dark: 0F172A (near-black navy)
++// Secondary: 1E293B (navy)
++// Accent: 06B6D4 (cyan/teal)
++// Accent dark: 0891B2
++// Light background: F8FAFC (ice white)
++// Body text: 334155 (dark slate)
++// Muted text: 64748B (medium slate)
++// White: FFFFFF
++
++// Helper: slide dimensions 10x5.625
++const W = 10, H = 5.625;
++const margin = 0.6;
++
++// ============================================================
++// SLIDE 1: Title Slide
++// ============================================================
++let s1 = pres.addSlide();
++s1.background = { color: "0F172A" };
++
++// Large cyan accent line at bottom
++s1.addShape(pres.shapes.RECTANGLE, {
++  x: 0, y: H - 0.06, w: W, h: 0.06,
++  fill: { color: "06B6D4" }
++});
++
++// Title block
++s1.addText("New Opportunities for\nLocal LLMs", {
++  x: margin, y: 1.6, w: 9, h: 2.0,
++  fontSize: 40, fontFace: "Calibri",
++  color: "FFFFFF", bold: true,
++  valign: "middle", align: "left",
++  lineSpacingMultiple: 1.1
++});
++
++// Subtitle line
++s1.addText("The Hybrid Deployment Model for Enterprise AI", {
++  x: margin, y: 3.8, w: 7, h: 0.5,
++  fontSize: 18, fontFace: "Calibri",
++  color: "06B6D4", italic: true
++});
++
++// Bottom text
++s1.addText("Hybrid Architecture  |  Privacy-First AI  |  Edge Intelligence", {
++  x: margin, y: 4.3, w: 8.5, h: 0.8,
++  fontSize: 13, fontFace: "Calibri",
++  color: "94A3B8", valign: "middle"
++});
++
++// Right side: decorative geometric element
++s1.addShape(pres.shapes.RECTANGLE, {
++  x: 8.2, y: 1.8, w: 1.0, h: 1.0,
++  fill: { color: "06B6D4", transparency: 85 }
++});
++s1.addShape(pres.shapes.RECTANGLE, {
++  x: 8.35, y: 1.95, w: 1.0, h: 1.0,
++  fill: { color: "0891B2", transparency: 75 }
++});
++s1.addShape(pres.shapes.RECTANGLE, {
++  x: 8.5, y: 2.1, w: 1.0, h: 1.0,
++  fill: { color: "06B6D4", transparency: 60 }
++});
++
++// Small "LLM" icon text
++s1.addText("01 / 05", {
++  x: W - margin - 1.0, y: 0.3, w: 1.0, h: 0.3,
++  fontSize: 10, fontFace: "Calibri",
++  color: "475569", align: "right"
++});
++
++
+… omitted 433 diff line(s) across 1 additional file(s)/section(s)
+  ┊ review diff
+a//home/baba-y/llm_presentation_2.js → b//home/baba-y/llm_presentation_2.js
+@@ -0,0 +1,425 @@
++const pptxgen = require("pptxgenjs");
++
++let pres = new pptxgen();
++pres.layout = "LAYOUT_16x9";
++pres.author = "Yuki";
++pres.title = "New Opportunities for Local LLMs";
++
++// Colors
++// Dark: 0F172A | Dark2: 1E293B | Accent: 06B6D4 | AccentDark: 0891B2
++// Light: F8FAFC | Body: 334155 | Muted: 64748B | Faint: 94A3B8 | Gray: 475569
++// White: FFFFFF | Dim: 64748B
++
++const W = 10;
++const H = 5.625;
++const M = 0.6; // margin
++const C = (color) => ({ color });
++const S = (props) => ({ type: "outer", blur: 8, offset: 2, angle: 135, ...props });
++const shadow = () => S({ color: "000000", opacity: 0.08 });
++const shadowLight = () => S({ color: "000000", opacity: 0.05 });
++
++// ============ SLIDE 1: Title ============
++let s1 = pres.addSlide();
++s1.background = { color: "0F172A" };
++
++// Large cyan accent line at bottom
++s1.addShape(pres.shapes.RECTANGLE, {
++  x: 0, y: H - 0.06, w: W, h: 0.06, fill: { color: "06B6D4" }
++});
++
++// Title
++s1.addText("New Opportunities for\nLocal LLMs", {
++  x: M, y: 1.5, w: 9, h: 2.0,
++  fontSize: 40, fontFace: "Calibri", color: "FFFFFF", bold: true,
++  valign: "middle", align: "left", lineSpacingMultiple: 1.15
++});
++
++// Subtitle
++s1.addText("The Hybrid Deployment Model for Enterprise AI", {
++  x: M, y: 3.7, w: 8, h: 0.5,
++  fontSize: 18, fontFace: "Calibri", color: "06B6D4", italic: true
++});
++
++// Tags
++s1.addText("Architecture  |  Privacy-First  |  Edge Intelligence  |  Cost Control", {
++  x: M, y: 4.2, w: 8.5, h: 0.5,
++  fontSize: 13, fontFace: "Calibri", color: "94A3B8"
++});
++
++// Decorative geometric element (top right)
++for (let i = 0; i < 4; i++) {
++  s1.addShape(pres.shapes.RECTANGLE, {
++    x: 7.8 + i * 0.15, y: 1.2 + i * 0.15,
++    w: 1.2 - i * 0.1, h: 1.2 - i * 0.1,
++    fill: { color: "06B6D4", transparency: 70 + i * 5 }
++  });
++}
++
++s1.addText("01 / 05", {
++  x: W - M - 0.8, y: H - 0.25, w: 1, h: 0.2,
++  fontSize: 9, fontFace: "Calibri", color: "475569", align: "right"
++});
++
++// ============ SLIDE 2: Market Landscape ============
++let s2 = pres.addSlide();
++s2.background = { color: "F8FAFC" };
++
++s2.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: W, h: 0.06, fill: { color: "0F172A" } });
++
++s2.addText("Market Landscape", {
++  x: M, y: 0.25, w: 8, h: 0.8,
++  fontSize: 32, fontFace: "Georgia", color: "0F172A", bold: true
++});
++
++s2.addText("Quantitative forecasts for local and edge AI infrastructure", {
++  x: M, y: 0.95, w: 8, h: 0.45,
++  fontSize: 14, fontFace: "Calibri", color: "64748B"
++});
++
+… omitted 347 diff line(s) across 1 additional file(s)/section(s)
+The presentation has been created and saved to `/home/baba-y/llm_presentation_2.pptx` (135KB). Here's the breakdown:
+
+**Slide 1 — Title**
+"New Opportunities for Local LLMs" - subtitle: "The Hybrid Deployment Model for Enterprise AI" with design tags (Architecture, Privacy-First, Edge Intelligence, Cost Control). Dark navy background with cyan accent.
+
+**Slide 2 — Market Landscape**
+Two comparison cards with quantitative placeholders:
+- Edge AI Market: $24.91B (2025) → $118.69B (2033), ~23.8% CAGR
+- Broader LLM Market: $10.97B (2026) → $32.5B (2030), ~24.3% CAGR
+Includes a note: "Insert [CONFIDENTIAL_DATA] to replace placeholder values before distribution."
+
+**Slide 3 — The Hybrid Deployment Model**
+Side-by-side comparison of LOCAL/EDGE vs. CLOUD API with:
+- Left: 5 use cases (sensitive docs Q&A, internal copilots, code assistance, factory/retail edge, RAG)
+- Right: strengths of cloud (complex reasoning, large-context, multi-modal, rapid innovation, peak intelligence)
+- Bottom insight: "The safest strategy: not local vs. cloud but where each fits best."
+
+**Slide 4 — Key Use Cases for Local LLMs**
+Four cards covering your core use cases with descriptions:
+1. Sensitive Document Q&A
+2. Internal Copilots
+3. Factory & Retail Edge
+4. RAG Knowledge Systems
+
+**Slide 5 — Strategic Recommendations**
+Three numbered recommendations:
+1. **Start Narrow, Think Big** - focus on sensitive data, repeated workflows, measurable ROI
+2. **Small & Mid Models First** - Llama, Mistral, Qwen, Gemma on consumer GPUs
+3. **Keep a Hybrid Path** - don't pick "either/or," use both where they fit
+
+Design notes:
+- Dark navy/cyan color palette (Midnight + Teal)
+- 16:9 format
+- Georgia headers + Calibri body font pairing
+- Varied layouts across slides (cards, comparison columns, numbered bars)
+- Slide 2 has placeholder markers where confidential market data should be inserted

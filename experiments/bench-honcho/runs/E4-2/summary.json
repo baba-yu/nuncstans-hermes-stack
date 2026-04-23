@@ -1,0 +1,76 @@
+{
+  "experiment": 4,
+  "tag": "2",
+  "honcho_variant": "ollama-9b",
+  "inference_model": "qwen3.5:9b",
+  "bonsai": {
+    "parallel": 1,
+    "ctx": 16384,
+    "needed": false
+  },
+  "turns": [
+    {
+      "id": 1,
+      "label": "self_intro",
+      "timeout_s": 600,
+      "wall_seconds": 79.639802526,
+      "exit_code": 0,
+      "session_id": "20260421_131908_5122b2",
+      "stdout_bytes": 964,
+      "stderr_bytes": 36
+    },
+    {
+      "id": 2,
+      "label": "info_1",
+      "timeout_s": 1200,
+      "wall_seconds": 99.092006976,
+      "exit_code": 0,
+      "session_id": "20260421_131908_5122b2",
+      "stdout_bytes": 1407,
+      "stderr_bytes": 36
+    },
+    {
+      "id": 3,
+      "label": "info_2",
+      "timeout_s": 1200,
+      "wall_seconds": 129.214277829,
+      "exit_code": 0,
+      "session_id": "20260421_131908_5122b2",
+      "stdout_bytes": 2542,
+      "stderr_bytes": 36
+    },
+    {
+      "id": 4,
+      "label": "info_3",
+      "timeout_s": 1200,
+      "wall_seconds": 201.278962549,
+      "exit_code": 0,
+      "session_id": "20260421_131908_5122b2",
+      "stdout_bytes": 2333,
+      "stderr_bytes": 36
+    },
+    {
+      "id": 5,
+      "label": "create_pptx",
+      "timeout_s": 3600,
+      "wall_seconds": 2198.068711714,
+      "exit_code": 0,
+      "session_id": "",
+      "stdout_bytes": 5193,
+      "stderr_bytes": 0
+    }
+  ],
+  "wall_seconds": 2707.293761594,
+  "drain_seconds": 229.479594969,
+  "total_seconds": 2936.773356563,
+  "completed_all_turns": true,
+  "any_turn_timeout": false,
+  "fail_at": null,
+  "session_id": "20260421_131908_5122b2",
+  "pptx": {
+    "ok": false,
+    "path": "/home/baba-y/nuncstans-hermes-stack/llm_presentation_4.pptx",
+    "error": "file not found"
+  },
+  "start_iso": "2026-04-21T13:19:07-07:00"
+}

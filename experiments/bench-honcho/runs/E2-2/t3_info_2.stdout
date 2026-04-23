@@ -1,0 +1,18 @@
+↻ Resumed session 20260421_102519_915543 (2 user messages, 8 total messages)
+That's a really helpful clarification — hybrid deployment rather than local vs. cloud is the right framing and reflects what organizations are actually doing today. The use cases you listed map well to what we're seeing in the industry.
+
+A few more specifics before I start digging in, so I can tailor this to what you actually need:
+
+1. **What do you want from me?**
+   - A full report draft?
+   - Just a detailed outline to fill in yourself?
+   - Content + structure but you write?
+   - Something else?
+
+2. **What format and length are you thinking?** Internal whitepaper? Blog post? Slide deck companion? Length (short exec-style ~1-2 pages vs in-depth ~5-10+ pages)?
+
+3. **Any specific models or tools you want highlighted?** E.g., Llama, Mistral, Qwen, Ollama, vLLM, llama.cpp, Hugging Face Transformers, etc.?
+
+4. **Audience level** — technical practitioners (DevOps/ML engineers), tech leads, or broader management?
+
+Once I know this, I can start researching and drafting right away.

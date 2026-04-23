@@ -1,0 +1,3 @@
+{"id": 1, "label": "self_intro", "timeout_s": 600, "wall_seconds": 429.668264147, "exit_code": 0, "session_id": "20260421_113115_46f37d", "stdout_bytes": 825, "stderr_bytes": 36}
+{"id": 2, "label": "info_1", "timeout_s": 1200, "wall_seconds": 506.678503803, "exit_code": 0, "session_id": "20260421_113115_46f37d", "stdout_bytes": 915, "stderr_bytes": 36}
+{"id": 3, "label": "info_2", "timeout_s": 1200, "wall_seconds": 1273.696137542, "exit_code": 124, "session_id": "", "stdout_bytes": 81, "stderr_bytes": 0}

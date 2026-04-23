@@ -1,0 +1,14 @@
+↻ Resumed session 20260421_140844_ff476f (2 user messages, 7 total messages)
+Got it — that's a clear, practical framing. The shift from "local vs cloud" to "hybrid deployment" better reflects how organizations actually use local LLMs.
+
+Your key points:
+- **Reality**: Hybrid deployment, not replacement
+- **Use cases**: sensitive doc Q&A, internal copilots, code assistance, edge (factory/retail), RAG knowledge systems
+- **Drivers**: latency, privacy/governance, data proximity, cost control
+
+I don't see an existing markdown report file from the earlier session — it may have been written but not saved to disk. Want me to:
+1. Write a fresh report using this hybrid deployment framing?
+2. Revise the existing PowerPoint to match?
+3. Something else entirely?
+
+Also — is there a specific format or audience you're targeting for the report?

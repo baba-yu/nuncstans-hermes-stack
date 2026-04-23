@@ -1,0 +1,93 @@
+  ┊ review diff
+a//home/baba-y/local-llm-deck.js → b//home/baba-y/local-llm-deck.js
+@@ -0,0 +1,549 @@
++const pptxgen = require("pptxgenjs");
++const fs = require("fs");
++
++let pres = new pptxgen();
++pres.layout = "LAYOUT_16x9";
++pres.author = "Yuki";
++pres.title = "New Opportunities for Local LLMs";
++
++// Palette: Ocean Gradient
++const BG_DARK = "0B1C26";
++const BG_DARK2 = "0F2436";
++const TEAL = "028090";
++const TEAL_LIGHT = "00A896";
++const MINT = "02C39A";
++const MIDNIGHT = "21295C";
++const WHITE = "FFFFFF";
++const ICE = "E0F2F1";
++
++// Helper: fresh options each time (PptxGenJS mutates objects)
++const makeBox = (x, y, w, h, bgColor) => ({
++  x, y, w, h,
++  fill: { color: bgColor },
++  shadow: { type: "outer", blur: 8, offset: 3, angle: 135, color: "000000", opacity: 0.12 }
++});
++
++// ============================================================
++// SLIDE 1: Title (dark background)
++// ============================================================
++let s1 = pres.addSlide();
++s1.background = { color: BG_DARK };
++
++// Large teal left vertical accent bar
++s1.addShape(pres.shapes.RECTANGLE, {
++  x: 0, y: 0, w: 0.12, h: 5.625,
++  fill: { color: TEAL }
++});
++
++// Decorative teal circle in corner
++s1.addShape(pres.shapes.OVAL, {
++  x: 7.5, y: -0.5, w: 3.0, h: 3.0,
++  fill: { color: TEAL, transparency: 85 }
++});
++
++// Smaller accent circle
++s1.addShape(pres.shapes.OVAL, {
++  x: 9.5, y: 4.5, w: 1.5, h: 1.5,
++  fill: { color: TEAL, transparency: 90 }
++});
++
++// Main title with mint accent line above
++s1.addShape(pres.shapes.RECTANGLE, {
++  x: 1.5, y: 1.6, w: 2.5, h: 0.06,
++  fill: { color: MINT }
++});
++
++s1.addText("New Opportunities", {
++  x: 1.5, y: 1.85, w: 8, h: 1.2,
++  fontSize: 46, fontFace: "Georgia", bold: true,
++  color: WHITE, align: "left", valign: "top"
++});
++
++s1.addText("for Local LLMs", {
++  x: 1.5, y: 3.0, w: 8, h: 1.0,
++  fontSize: 42, fontFace: "Georgia",
++  color: TEAL_LIGHT, italic: true,
++  align: "left", valign: "top"
++});
++
++// Subtitle row
++s1.addShape(pres.shapes.RECTANGLE, {
++  x: 1.5, y: 3.85, w: 1.5, h: 0.04,
++  fill: { color: MINT }
++});
++
++s1.addText("Market Shift \u2022 Enterprise Adoption \u2022 Privacy-First AI", {
++  x: 1.5, y: 4.0, w: 8, h: 0.8,
++  fontSize: 14, fontFace: "Calibri", color: "94A3B8", align: "left", valign: "top"
++});
+… omitted 471 diff line(s) across 1 additional file(s)/section(s)
+  ┊ review diff
+a//home/baba-y/local-llm-deck.js → b//home/baba-y/local-llm-deck.js
+@@ -266,7 +266,7 @@
+ });
+ s3.addShape(pres.shapes.OVAL, {
+   x: 0.6, y: 3.4, w: 0.3, h: 0.3,
+-  fill: { color: 00A896 }
++  fill: { color: "00A896" }
+ });
+ s3.addText("\u2713", {
+   x: 0.6, y: 3.43, w: 0.3, h: 0.3,

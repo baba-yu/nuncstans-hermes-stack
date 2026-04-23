@@ -1,0 +1,28 @@
+{
+  "experiment": 4,
+  "honcho_variant": "ollama-9b",
+  "inference_model": "qwen3.5:9b",
+  "bonsai": {
+    "parallel": 1,
+    "ctx": 16384,
+    "needed": false
+  },
+  "ollama": {
+    "overhead": 0,
+    "max_loaded": 1
+  },
+  "wall_seconds": 1844.202471834,
+  "drain_seconds": 0.397421289,
+  "total_seconds": 1844.5998931230001,
+  "deriver_queue_rows": 0,
+  "observations_created": 0,
+  "exit_code": 124,
+  "pptx": {
+    "ok": false,
+    "path": "/home/baba-y/llm_presentation_4.pptx",
+    "error": "Package not found at '/home/baba-y/llm_presentation_4.pptx'",
+    "fallback_error": "File is not a zip file",
+    "size": 8046
+  },
+  "start_iso": "2026-04-21T03:26:33-07:00"
+}

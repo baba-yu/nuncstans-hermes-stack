@@ -1,0 +1,4 @@
+Failed to initialize agent: Model bonsai-8b has a context window of 32,768 
+tokens, which is below the minimum 64,000 required by Hermes Agent.  Choose a 
+model with at least 64K context, or set model.context_length in config.yaml to 
+override.

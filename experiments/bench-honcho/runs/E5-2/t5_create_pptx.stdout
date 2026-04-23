@@ -1,0 +1,187 @@
+↻ Resumed session 20260421_144101_78fae9 (4 user messages, 21 total messages)
+  ┊ review diff
+a//home/baba-y/builds/_llm_deck.mjs → b//home/baba-y/builds/_llm_deck.mjs
+@@ -0,0 +1,396 @@
++import PptxGenJS from "pptxgenjs";
++import { execSync } from "child_process";
++import path from "path";
++
++const pres = new PptxGenJS();
++pres.layout = "LAYOUT_16x9";
++pres.author = "Yuki";
++pres.title = "New Opportunities for Local LLMs";
++
++// Palette: dark navy + teal
++const BG_DARK = "0F172A";
++const BG_SLATE = "1E293B";
++const TXT_PRIMARY = "F8FAFC";
++const TXT_MUTED = "94A3B8";
++const ACCENT = "06B6D4";
++const ACCENT_DARK = "0891B2";
++const ACCENT_LIGHT = "67E8F9";
++const CARD_DARK = "1E293B";
++const CARD_LIGHT = "334155";
++
++// --- Slide 1: Title ---
++const slide1 = pres.addSlide();
++slide1.background = { color: BG_DARK };
++
++// Top accent line
++slide1.addShape(pres.shapes.RECTANGLE, {
++  x: 0, y: 0, w: 10, h: 0.06, fill: { color: ACCENT }
++});
++
++// Large stat: $24.91B → $118.69B
++slide1.addText("2025", {
++  x: 0.5, y: 1.2, w: 2, h: 0.8, fontSize: 30, fontFace: "Georgia",
++  color: TXT_PRIMARY, bold: true, align: "right", valign: "middle",
++  margin: 0
++});
++slide1.addText("→", {
++  x: 2.5, y: 1.2, w: 1.2, h: 0.8, fontSize: 36, fontFace: "Georgia",
++  color: ACCENT, align: "center", valign: "middle", margin: 0
++});
++slide1.addText("367% growth", {
++  x: 3.7, y: 1.2, w: 3, h: 0.8, fontSize: 20, fontFace: "Calibri",
++  color: ACCENT_LIGHT, italic: true, valign: "middle", margin: 0
++});
++
++// Title
++slide1.addText("New Opportunities for Local LLMs", {
++  x: 0.5, y: 2.2, w: 9, h: 1.2, fontSize: 40, fontFace: "Georgia",
++  color: TXT_PRIMARY, bold: true, valign: "middle", margin: 0
++});
++
++// Subtitle
++slide1.addText(
++  "Hybrid deployment is the real enterprise pattern",
++  {
++    x: 0.5, y: 3.5, w: 7, h: 0.6, fontSize: 18, fontFace: "Calibri",
++    color: ACCENT, italic: true, valign: "middle", margin: 0
++  }
++);
++
++// Tagline
++slide1.addText("Edge AI market as proxy: $24.91B → $118.69B by 2033", {
++  x: 0.5, y: 4.2, w: 6, h: 0.5, fontSize: 13, fontFace: "Calibri",
++  color: TXT_MUTED, valign: "middle", margin: 0
++});
++
++// Bottom accent line
++slide1.addShape(pres.shapes.RECTANGLE, {
++  x: 0, y: 5.565, w: 10, h: 0.06, fill: { color: ACCENT }
++});
++
++// Footer
++slide1.addText("April 2026", {
++  x: 8, y: 5.2, w: 1.5, h: 0.3, fontSize: 10, fontFace: "Calibri",
++  color: TXT_MUTED, align: "right", valign: "middle", margin: 0
++});
++
++// --- Slide 2: Market Shift ---
++const slide2 = pres.addSlide();
+… omitted 318 diff line(s) across 1 additional file(s)/section(s)
+  ┊ review diff
+a//home/baba-y/builds/_llm_deck.mjs → b//home/baba-y/builds/_llm_deck.mjs
+@@ -1,6 +1,4 @@
+ import PptxGenJS from "pptxgenjs";
+-import { execSync } from "child_process";
+-import path from "path";
+ 
+ const pres = new PptxGenJS();
+ pres.layout = "LAYOUT_16x9";
+@@ -17,380 +15,403 @@
+ const ACCENT_LIGHT = "67E8F9";
+ const CARD_DARK = "1E293B";
+ const CARD_LIGHT = "334155";
++const PURPLE = "8B5CF6";
+ 
+ // --- Slide 1: Title ---
+-const slide1 = pres.addSlide();
+-slide1.background = { color: BG_DARK };
++const s1 = pres.addSlide();
++s1.background = { color: BG_DARK };
+ 
+ // Top accent line
+-slide1.addShape(pres.shapes.RECTANGLE, {
++s1.addShape(pres.shapes.RECTANGLE, {
+   x: 0, y: 0, w: 10, h: 0.06, fill: { color: ACCENT }
+ });
+ 
+-// Large stat: $24.91B → $118.69B
+-slide1.addText("2025", {
++// Top stat display
++s1.addText("2025", {
+   x: 0.5, y: 1.2, w: 2, h: 0.8, fontSize: 30, fontFace: "Georgia",
+-  color: TXT_PRIMARY, bold: true, align: "right", valign: "middle",
+-  margin: 0
+-});
+-slide1.addText("→", {
+-  x: 2.5, y: 1.2, w: 1.2, h: 0.8, fontSize: 36, fontFace: "Georgia",
+-  color: ACCENT, align: "center", valign: "middle", margin: 0
+-});
+-slide1.addText("367% growth", {
+-  x: 3.7, y: 1.2, w: 3, h: 0.8, fontSize: 20, fontFace: "Calibri",
++  color: ACCENT_LIGHT, bold: true, align: "right", valign: "middle", margin: 0
++});
++s1.addShape(pres.shapes.LINE, {
++  x: 2.5, y: 1.6, w: 1, h: 0,
++  line: { color: ACCENT, width: 3 }
++});
++s1.addText("367% growth", {
++  x: 3.5, y: 1.3, w: 3, h: 0.5, fontSize: 20, fontFace: "Calibri",
+   color: ACCENT_LIGHT, italic: true, valign: "middle", margin: 0
+ });
+ 
+ // Title
+-slide1.addText("New Opportunities for Local LLMs", {
+-  x: 0.5, y: 2.2, w: 9, h: 1.2, fontSize: 40, fontFace: "Georgia",
++s1.addText("New Opportunities for Local LLMs", {
++  x: 0.5, y: 2.3, w: 9, h: 1.0, fontSize: 40, fontFace: "Georgia",
+   color: TXT_PRIMARY, bold: true, valign: "middle", margin: 0
+ });
+ 
+ // Subtitle
+-slide1.addText(
+-  "Hybrid deployment is the real enterprise pattern",
+-  {
+-    x: 0.5, y: 3.5, w: 7, h: 0.6, fontSize: 18, fontFace: "Calibri",
+-    color: ACCENT, italic: true, valign: "middle", margin: 0
+-  }
+-);
+-
+-// Tagline
+-slide1.addText("Edge AI market as proxy: $24.91B → $118.69B by 2033", {
+-  x: 0.5, y: 4.2, w: 6, h: 0.5, fontSize: 13, fontFace: "Calibri",
++s1.addText("Hybrid deployment is the real enterprise pattern", {
++  x: 0.5, y: 3.5, w: 7.5, h: 0.5, fontSize: 19, fontFace: "Calibri",
++  color: ACCENT, italic: true, valign: "middle", margin: 0
++});
++
++// Market context box
++s1.addShape(pres.shapes.RECTANGLE, {
++  x: 0.5, y: 4.2, w: 7, h: 0.55,
++  fill: { color: CARD_LIGHT }
+… omitted 629 diff line(s) across 1 additional file(s)/section(s)
+  ┊ review diff
+a//home/baba-y/builds/_llm_deck.mjs → b//home/baba-y/builds/_llm_deck.mjs
+@@ -200,7 +200,7 @@
+ 
+ useCases.forEach((u, i) => {
+   const y = 1.15 + i * 0.8;
+-  const isOrange = u.bg === "D9706";
++  const isOrange = u.bg === "D97706";
+ 
+   // Card background
+   s3.addShape(pres.shapes.RECTANGLE, {
+Done. The deck is saved at `/home/baba-y/builds/llm_presentation_5.pptx` (146 KB).
+
+**What's in the 5 slides:**
+
+1. **Cover** — Big stat callout (367% growth), title, subtitle, edge AI market proxy, April 2026 date
+2. **Market** — Two comparison cards (Edge AI: $24.91B→$118.69B / LLM: $10.97B→$32.5B) with 4 driver icons and a key insight box about the fuzzy category boundary. Market data source citation placeholders included as requested.
+3. **Use Cases** — 5 operational cases (Doc Q&A, Copilots, Code Assist, Edge, RAG) with a right-side callout "Why Local Wins Here" listing 5 benefits
+4. **Why Now** — Three columns: Quantization (GGUF/GPTQ/AWQ), Real-time models (Llama/Phi/Gemma/Mistral/Qwen), Hardware (RTX 5080 example). Bottom highlight bar with the 13B on 16GB VRAM key metric
+5. **Strategic Recommendations** — 01 Start Narrow, 02 Start Small, 03 Lock In Hybrid — each with 3 bullet points. Closing quote at bottom.
+
+All content was verified against the raw XML — no missing items or placeholder leaks. Ready to present.

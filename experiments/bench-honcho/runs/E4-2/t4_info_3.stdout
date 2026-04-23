@@ -1,0 +1,34 @@
+↻ Resumed session 20260421_131908_5122b2 (3 user messages, 6 total messages)
+That is a precise way to frame it. Using the **Edge AI market** as a proxy for local LLMs is pragmatic—since "Local LLM" isn't yet a standardized category in Gartner or Forrester reports, edge compute (NPU/TPU/GPU inference on-device) captures that spend exactly.
+
+We have enough for the **Market Landscape** section. We can anchor it with these numbers:
+
+**Market Landscape (Drafting Notes)**
+*   **Growth Trajectory:** Edge AI projected to swell from ~$25B (2025) to ~$119B (2033). This reflects the infrastructure shift toward on-device/enterprise edge compute.
+*   **LLM Specifics:** Broader LLM market (2026–2030 estimates) confirms the spending tailwinds, with local inference capturing an increasingly large slice of that stack.
+
+**Strategic Implementation** moves into your advice:
+1.  **Narrow & High-Value Targets:** Privacy-sensitive data, repetitive internal workflows, clear ROI.
+2.  **Open Models First:** 3B–7B parameter models have closed the gap significantly; no need to start with bloated models.
+3.  **The Hybrid Safety Net:** Cloud fallback for high-ambiguity tasks the local model can't handle.
+
+### Updating the Report Structure
+
+With the market and strategy in, we can map the full flow:
+
+**1. Executive Summary**
+**2. Market Landscape:** Edge AI proxy data & growth trends.
+**3. The Hybrid Thesis:** Why "Local vs. Cloud" is a false dichotomy.
+**4. Operational Drivers:** Latency, data sovereignty, offline reliability.
+**5. Technical Feasibility:** Quantization (4-bit/3-bit), MoE architectures, the new efficiency standards.
+**6. Hardware Sweet Spots:** Focus on the $500–$1,000 consumer/prosumer market (RTX 4090/5080 class, 16GB VRAM).
+**7. Strategic Implementation:** (Your roadmap above) Niche targets → Open Models → Hybrid fallback.
+**8. Risks & Trade-offs.**
+
+---
+
+**What do you want to tackle next?**
+
+1. **Technical Specs / Benchmarks:** Quantify "real-time on consumer hardware." What models (e.g., Llama 3, Mistral, Gemma, Qwen) and context windows can squeeze out of 16GB VRAM?
+2. **Drafting:** Start writing the Market Landscape section using the data above?
+3. **Tooling:** The software landscape (vLLM, Ollama, Text Generation WebUI) that makes running these models actually bearable for engineers?

@@ -1,0 +1,14 @@
+↻ Resumed session 20260421_140844_ff476f (3 user messages, 14 total messages)
+That's exactly right — the edge AI proxy is the most defensible market number since "local LLM" isn't a standard Gartner/IDC category. Good call on the dual framing too: edge AI for the hardware/on-device angle, broader LLM market for the total addressable opportunity.
+
+So we have:
+
+- **Core framing**: Hybrid deployment (not local vs cloud)
+- **Advantages**: lower data exposure, control, offline/low-latency, easier customization
+- **Feasibility**: billions-parameter models on real-time consumer hardware
+- **Use cases**: sensitive doc Q&A, internal copilots, code assist, factory/retail edge, RAG knowledge systems
+- **Drivers**: latency, privacy/governance, data proximity, cost control
+- **Market proxies**: Edge AI $24.91B(2025) → $118.69B(2033); LLM market $10.97B(2026) → $32.5B(2030)
+- **Strategy**: start narrow, small/mid open models first, keep hybrid path
+
+Want me to synthesize all of this into a Markdown report draft now, or do you have more sections to add? I can go ahead and write it up in whichever format you need — whether that's Markdown, Obsidian notes, or a new slide deck.

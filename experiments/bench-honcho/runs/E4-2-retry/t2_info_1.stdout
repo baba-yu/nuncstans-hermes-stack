@@ -1,0 +1,15 @@
+↻ Resumed session 20260421_140844_ff476f (1 user message, 5 total messages)
+Got it. That's a clear and focused framing. Let me confirm I've got the right structure from what you're describing:
+
+**Report framing you want:**
+- **Core definition**: Models running on enterprise-owned hardware (PCs → edge), not public cloud APIs
+- **Key angle**: Practical feasibility — billion-parameter models now running in real time on consumer-grade hardware (like your RTX 5080 16GB)
+- **Why it matters**: Data exposure, control, latency/availability, customization
+
+That lines up with what we started earlier. The report draft I generated had most of this, but it was framed around "Hybrid Deployment" as the central thesis. Would you like me to:
+
+1. **Refresh the existing draft** to foreground "feasibility on consumer hardware" as the defining feature, and tighten the language around your four advantages
+2. **Start fresh** with a new structure from here
+3. **Expand the existing deck** with a slide focused specifically on the hardware-feasibility angle
+
+Which direction makes sense?

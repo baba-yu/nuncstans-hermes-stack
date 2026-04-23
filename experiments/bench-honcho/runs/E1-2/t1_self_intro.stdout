@@ -1,0 +1,9 @@
+Hello Yuki! Nice to meet you. That's a great project - LLM research is evolving fast.
+
+To help you effectively, could you clarify what you're aiming for?
+
+1. **Topic focus**: Specific area (e.g., fine-tuning methods, new architectures, benchmarking, safety/red-teaming, deployment/quantization)?
+2. **Scope**: A survey of recent advances, deep-dive on a particular paper/topic, or tracking developments over time?
+3. **Format**: Markdown, Obsidian notes, or something else?
+
+Also, since you're running your own models on an RTX 5080 (16GB VRAM), I've noted your hardware context - this can shape practical recommendations (e.g., which models are feasible at Q4/AWQ vs needing multi-GPU). What's the angle you want to start with?

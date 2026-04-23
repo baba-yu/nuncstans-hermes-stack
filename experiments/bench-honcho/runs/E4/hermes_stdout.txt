@@ -1,0 +1,164 @@
+  ┊ review diff
+a//home/baba-y/llm_presentation_script.js → b//home/baba-y/llm_presentation_script.js
+@@ -0,0 +1,286 @@
++#!/usr/bin/env node
++const pptxgen = require("pptxjs");
++
++// 16x9  --  Ocean Gradient palette
++const BG_DARK  = "0B1A2E";
++const BG_CARD  = "FFFFFF";
++const ACCENT   = "065A82";
++const ACCENT_B = "14B8A6";
++const ACCENT_P = "7C3AED";
++const DRK      = "1E293B";
++const GRAY     = "64748B";
++
++let pres = new pptxgen();
++pres.layout = "LAYOUT_16x9";
++pres.author   = "Yuki";
++pres.title    = "New Opportunities for Local LLMs";
++
++// ===== HELPERS =====
++const shadow = { type:"outer", blur:4, offset:1, angle:135, color:"000000", opacity:0.08 };
++const lightShadow = { type:"outer", blur:3, offset:1, angle:135, color:"000000", opacity:0.06 };
++
++function addFooter(slide) {
++  slide.addShape(pres.shapes.RECTANGLE, {
++    x:0, y:5.35, w:10, h:0.275, fill:{color:"E2E8F0"}
++  });
++  slide.addText("New Opportunities for Local LLMs | April 2026", {
++    x:0.5, y:5.375, w:6, h:0.225, fontSize:7, fontFace:"Calibri", color:GRAY, valign:"middle"
++  });
++}
++
++function addSectionHeader(slide, text) {
++  slide.addShape(pres.shapes.RECTANGLE, {
++    x:0.6, y:0.3, w:0.08, h:0.45, fill:{color:ACCENT_B}
++  });
++  slide.addText(text, {
++    x:0.85, y:0.25, w:5.5, h:0.6, fontSize:28, fontFace:"Calibri", bold:true, color:DRK, valign:"middle", margin:0
++  });
++}
++
++// ===== SLIDE 1 - TITLE =====
++let s1 = pres.addSlide();
++s1.background = { color: BG_DARK };
++
++// Top accent bar
++s1.addShape(pres.shapes.RECTANGLE, { x:0, y:0, w:10, h:0.06, fill:{color:ACCENT_B} });
++
++// Decorative shapes
++s1.addShape(pres.shapes.RECTANGLE, {
++  x:0.8, y:0.4, w:0.6, h:0.6, fill:{color:ACCENT_B, transparency:85}
++});
++s1.addShape(pres.shapes.OVAL, {
++  x:8.8, y:4.3, w:1, h:1, fill:{color:ACCENT, transparency:80}
++});
++
++s1.addText("New Opportunities\nfor Local LLMs", {
++  x:0.8, y:1.6, w:8.5, h:2.2,
++  fontSize:40, fontFace:"Calibri", bold:true, color:"FFFFFF", align:"left", valign:"middle"
++});
++
++s1.addText("Privacy-first, latency-optimized AI at the edge", {
++  x:0.8, y:3.8, w:7, h:0.7,
++  fontSize:16, fontFace:"Calibri", italic:true, color:"94A3B8", align:"left"
++});
++
++// Bottom bar
++s1.addShape(pres.shapes.RECTANGLE, { x:0, y:4.6, w:10, h:1.0, fill:{color:"0F2440"} });
++s1.addText("Presented by Yuki  |  April 2026", {
++  x:1, y:4.65, w:8, h:0.9, fontSize:12, fontFace:"Calibri", color:"8B8B8B", valign:"middle"
++});
++
++// ===== SLIDE 2 - WHY LOCAL LLMs =====
++let s2 = pres.addSlide();
++s2.background = { color:"F0F4F8" };
++addSectionHeader(s2, "Why Local LLMs Matter Now");
++
++// Intro line
++s2.addText("Three forces accelerate adoption:", {
++  x:0.6, y:1.1, w:8.8, h:0.5,
+… omitted 208 diff line(s) across 1 additional file(s)/section(s)
+  ┊ review diff
+a//home/baba-y/llm_presentation_4.pptx → b//home/baba-y/llm_presentation_4.pptx
+@@ -0,0 +1,167 @@
++#!/usr/bin/env node
++const pptxgen = require("pptxgenjs");
++
++const BG_DARK  = "0B1A2E";
++const BG_CARD  = "FFFFFF";
++const ACCENT   = "065A82";
++const ACCENT_B = "14B8A6";
++const ACCENT_P = "7C3AED";
++const DRK      = "1E293B";
++const GRAY     = "64748B";
++const GRAY_L   = "94A3B8";
++const GREEN    = "047857";
++
++let pres = new pptxgen();
++pres.layout     = "LAYOUT_16x9";
++pres.author     = "Yuki";
++pres.title      = "New Opportunities for Local LLMs";
++
++/* helpers */
++const shOuter = (o) => {type:"outer",blur:4,offset:1,angle:135,color:"000000",opacity:o||0.08};
++
++function footer(s){
++  s.addShape(pres.shapes.RECTANGLE,{x:0,y:5.35,w:10,h:0.275,fill:{color:"E2E8F0"}});
++  s.addText("New Opportunities for Local LLMs | April 2026",{
++    x:0.5,y:5.375,w:6,h:0.225,fontSize:7,fontFace:"Calibri",color:GRAY,valign:"middle"});
++}
++function secHead(s,txt){
++  s.addShape(pres.shapes.RECTANGLE,{x:0.6,y:0.3,w:0.08,h:0.45,fill:{color:ACCENT_B}});
++  s.addText(txt,{x:0.85,y:0.22,w:8,h:0.65,fontSize:28,fontFace:"Calibri",bold:true,color:DRK,valign:"middle",margin:0});
++}
++
++/* === SLIDE 1 — TITLE === */
++let s1=pres.addSlide();
++s1.background={color:BG_DARK};
++
++/* top accent */
++s1.addShape(pres.shapes.RECTANGLE,{x:0,y:0,w:10,h:0.06,fill:{color:ACCENT_B}});
++
++/* decorative blocks */
++s1.addShape(pres.shapes.RECTANGLE,{x:0.8,y:0.4,w:0.6,h:0.6,fill:{color:ACCENT_B,transparency:85}});
++s1.addShape(pres.shapes.OVAL,     {x:8.8,y:4.3,w:1,h:1,fill:{color:ACCENT,transparency:80}});
++
++s1.addText("New Opportunities\nfor Local LLMs",{
++  x:0.8,y:1.6,w:8.5,h:2.2,fontSize:40,fontFace:"Calibri",bold:true,color:"FFFFFF",align:"left",valign:"middle"});
++
++s1.addText("Privacy-first, latency-optimized AI at the edge",{
++  x:0.8,y:3.8,w:7,h:0.7,fontSize:16,fontFace:"Calibri",italic:true,color:GRAY_L,align:"left"});
++
++/* bottom bar */
++s1.addShape(pres.shapes.RECTANGLE,{x:0,y:4.6,w:10,h:1.0,fill:{color:"0F2440"}});
++s1.addText("Presented by Yuki | April 2026",{
++  x:1,y:4.65,w:8,h:0.9,fontSize:12,fontFace:"Calibri",color:"8B8B8B",valign:"middle"});
++
++/* === SLIDE 2 — WHY LOCAL LLMs === */
++let s2=pres.addSlide();
++s2.background={color:"F0F4F8"};
++secHead(s2,"Why Local LLMs Matter Now");
++
++s2.addText("Three forces accelerate adoption:",{
++  x:0.6,y:1.1,w:8.8,h:0.5,fontSize:14,fontFace:"Calibri",color:GRAY,margin:0});
++
++const cards=[
++  {a:ACCENT,title:"Data Privacy & Sovereignty",stat:"100%",lbl:"data control"},
++  {a:ACCENT_B,title:"Latency & Reliability",    stat:"0ms",  lbl:"offline capability"},
++  {a:ACCENT_P,title:"Cost Efficiency",            stat:"80%+",lbl:"lower cost vs cloud"},
++];
++const cW=2.8, cH=2.3, cG=0.3, cSx=(10-3*cW-2*cG)/2;
++cards.forEach((c,i)=>{
++  let x=cSx+(cW+cG)*i, y=1.8;
++  s2.addShape(pres.shapes.RECTANGLE,{x,y,w:cW,h:cH,fill:{color:BG_CARD},shadow:shOuter()});
++  s2.addShape(pres.shapes.RECTANGLE,{x,y:y,w:cW,h:0.05,fill:{color:c.a}});
++  s2.addText(c.title,{x:x+0.15,y:y+0.15,w:cW-0.3,h:0.8,fontSize:i>0?15:14,fontFace:"Calibri",bold:true,color:DRK,valign:"bottom"});
++  let fs=c.stat.match(/^\d/) && c.stat.length<=3 ? 30 : 22;
++  s2.addText(c.stat,{x:x+0.15,y:y+1.0,w:cW-0.3,h:0.7,fontSize:fs,fontFace:"Calibri",bold:true,color:c.a,align:"center",margin:0});
++  s2.addText(c.lbl,{x:x+0.15,y:y+1.6,w:cW-0.3,h:0.5,fontSize:10,fontFace:"Calibri Light",color:GRAY,align:"center"});
++});
++footer(s2);
++
+… omitted 89 diff line(s) across 1 additional file(s)/section(s)

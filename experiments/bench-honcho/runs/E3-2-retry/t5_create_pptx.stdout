@@ -1,0 +1,231 @@
+↻ Resumed session 20260421_121303_2b1296 (4 user messages, 8 total messages)
+  ┊ review diff
+a//home/baba-y/create_deck.js → b//home/baba-y/create_deck.js
+@@ -0,0 +1,276 @@
++const pptxgen = require("pptxgenjs");
++
++const pres = new pptxgen();
++pres.layout = "LAYOUT_16x9";
++pres.author = "Yuki";
++pres.title = "New Opportunities for Local LLMs";
++
++// Color palette: Midnight Executive + teal accent
++const NAVY   = "1E2761";
++const DARK   = "0B1137";
++const CARD   = "1A2856";
++const ACCENT = "0891B2";
++const LIGHT  = "CADCFC";
++const WHITE  = "F1F5FC";
++const TEXT   = "334155";
++const Muted  = "8899BB";
++
++// ============= SLIDE 1 - TITLE =============
++let s1 = pres.addSlide();
++s1.background = { color: DARK };
++
++// Decorative bar top
++s1.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 0.06, fill: { color: ACCENT } });
++
++// Title block
++s1.addText("New Opportunities", { x: 0.8, y: 1.2, w: 8.4, h: 1.0, fontSize: 44, bold: true, color: WHITE, fontFace: "Calibri" });
++s1.addText("for Local LLMs",              { x: 0.8, y: 1.9, w: 8.4, h: 0.8, fontSize: 44, bold: true, color: ACCENT,  fontFace: "Calibri" });
++
++// Subtitle line
++s1.addText("The Hybrid Architecture Is the Real Story \u2014 Operational Drivers, Deployment Patterns, and Market Outlook", {
++  x: 0.8, y: 2.85, w: 8.4, h: 0.7, fontSize: 16, italic: true, color: LIGHT, fontFace: "Calibri"
++});
++
++// Horizontal accent line
++s1.addShape(pres.shapes.RECTANGLE, { x: 0.8, y: 3.5, w: 2.0, h: 0.04, fill: { color: ACCENT } });
++
++// Presenter line
++s1.addText("Prepared by Yuki  |  April 2026", {
++  x: 0.8, y: 4.0, w: 8.4, h: 0.5, fontSize: 13, color: Muted, fontFace: "Calibri"
++});
++
++// Bottom bar
++s1.addShape(pres.shapes.RECTANGLE, { x: 0, y: 5.3, w: 10, h: 0.3, fill: { color: NAVY }, line: { width: 0 } });
++s1.addText("Enterprise AI Infrastructure  |  Confidential", {
++  x: 0, y: 5.3, w: 10, h: 0.3, fontSize: 10, color: Muted, fontFace: "Calibri", align: "right", valign: "middle", margin: 0
++});
++
++// ============= SLIDE 2 - THE HYBRID THESIS =============
++let s2 = pres.addSlide();
++s2.background = { color: "F8FAFC" };
++
++// Top accent bar
++s2.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 0.06, fill: { color: ACCENT } });
++
++// Title background block
++s2.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0.06, w: 10, h: 0.9, fill: { color: DARK } });
++s2.addText("The Hybrid Thesis", { x: 0.5, y: 0.15, w: 5, h: 0.5, fontSize: 30, bold: true, color: WHITE, fontFace: "Calibri" });
++s2.addText("Why \"hybrid,\" not \"local replaces cloud.\"",    { x: 0.5, y: 0.55, w: 7, h: 0.4, fontSize: 14, italic: true, color: ACCENT, fontFace: "Calibri" });
++
++// Left column title
++s2.addText("What Goes Local", { x: 0.5, y: 1.2, w: 4.2, h: 0.45, fontSize: 20, bold: true, color: ACCENT, fontFace: "Calibri" });
++s2.addText([
++  { text: "Sensitive document Q&A & RAG \u2014 data never leaves premises",            options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
++  { text: "Internal copilots tuned to company vocabulary & tooling",             options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
++  { text: "Code assistance on private repos \u2014 zero leakage risk",             options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
++  { text: "Factory floor & retail edge \u2014 latency-critical, offline-capable",  options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
++  { text: "Compliance pipelines (PHI, financial, government data)",              options: { bullet: true, fontSize: 14, color: TEXT, fontFace: "Calibri" } }
++], { x: 0.5, y: 1.7, w: 4.5, h: 3.2 });
++
++// Right column title
++s2.addText("What Stays Cloud", { x: 5.2, y: 1.2, w: 4.3, h: 0.45, fontSize: 20, bold: true, color: DARK, fontFace: "Calibri" });
++s2.addText([
++  { text: "Frontier-tier reasoning on complex tasks",             options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
++  { text: "Burst traffic overflow beyond on-prem capacity",       options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
++  { text: "Rapid frontier updates without hardware refresh",      options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
++  { text: "General-purpose tasks lacking sensitive data",         options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
++  { text: "Cross-functional research & creative work",           options: { bullet: true, fontSize: 14, color: TEXT, fontFace: "Calibri" } }
++], { x: 5.2, y: 1.7, w: 4.3, h: 3.2 });
+… omitted 198 diff line(s) across 1 additional file(s)/section(s)
+  ┊ review diff
+a//home/baba-y/create_deck.js → b//home/baba-y/create_deck.js
+@@ -272,5 +272,7 @@
+ });
+ 
+ // Save
+-await pres.writeFile({ fileName: "/home/baba-y/llm_presentation_3.pptx" });
+-console.log("PPTX generated successfully: llm_presentation_3.pptx");
++(async () => {
++  await pres.writeFile({ fileName: "/home/baba-y/llm_presentation_3.pptx" });
++  console.log("PPTX generated successfully: llm_presentation_3.pptx");
++})();
+  ┊ review diff
+a//home/baba-y/create_deck.js → b//home/baba-y/create_deck.js
+@@ -1,4 +1,4 @@
+-const pptxgen = require("pptxgenjs");
++const pptxgen = await import("pptxgenjs");
+ 
+ const pres = new pptxgen();
+ pres.layout = "LAYOUT_16x9";
+  ┊ review diff
+a//home/baba-y/create_deck.js → b//home/baba-y/create_deck.js
+@@ -1,6 +1,6 @@
+-const pptxgen = await import("pptxgenjs");
+-
+-const pres = new pptxgen();
++import PptxGenJS from "pptxgenjs";
++
++const pres = new PptxGenJS();
+ pres.layout = "LAYOUT_16x9";
+ pres.author = "Yuki";
+ pres.title = "New Opportunities for Local LLMs";
+  ┊ review diff
+a//home/baba-y/create_deck.js → b//home/baba-y/create_deck.js
+@@ -5,7 +5,6 @@
+ pres.author = "Yuki";
+ pres.title = "New Opportunities for Local LLMs";
+ 
+-// Color palette: Midnight Executive + teal accent
+ const NAVY   = "1E2761";
+ const DARK   = "0B1137";
+ const CARD   = "1A2856";
+@@ -15,264 +14,205 @@
+ const TEXT   = "334155";
+ const Muted  = "8899BB";
+ 
+-// ============= SLIDE 1 - TITLE =============
+-let s1 = pres.addSlide();
+-s1.background = { color: DARK };
+-
+-// Decorative bar top
+-s1.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 0.06, fill: { color: ACCENT } });
+-
+-// Title block
+-s1.addText("New Opportunities", { x: 0.8, y: 1.2, w: 8.4, h: 1.0, fontSize: 44, bold: true, color: WHITE, fontFace: "Calibri" });
+-s1.addText("for Local LLMs",              { x: 0.8, y: 1.9, w: 8.4, h: 0.8, fontSize: 44, bold: true, color: ACCENT,  fontFace: "Calibri" });
+-
+-// Subtitle line
+-s1.addText("The Hybrid Architecture Is the Real Story \u2014 Operational Drivers, Deployment Patterns, and Market Outlook", {
+-  x: 0.8, y: 2.85, w: 8.4, h: 0.7, fontSize: 16, italic: true, color: LIGHT, fontFace: "Calibri"
+-});
+-
+-// Horizontal accent line
+-s1.addShape(pres.shapes.RECTANGLE, { x: 0.8, y: 3.5, w: 2.0, h: 0.04, fill: { color: ACCENT } });
+-
+-// Presenter line
+-s1.addText("Prepared by Yuki  |  April 2026", {
+-  x: 0.8, y: 4.0, w: 8.4, h: 0.5, fontSize: 13, color: Muted, fontFace: "Calibri"
+-});
+-
+-// Bottom bar
+-s1.addShape(pres.shapes.RECTANGLE, { x: 0, y: 5.3, w: 10, h: 0.3, fill: { color: NAVY }, line: { width: 0 } });
+-s1.addText("Enterprise AI Infrastructure  |  Confidential", {
+-  x: 0, y: 5.3, w: 10, h: 0.3, fontSize: 10, color: Muted, fontFace: "Calibri", align: "right", valign: "middle", margin: 0
+-});
+-
+-// ============= SLIDE 2 - THE HYBRID THESIS =============
+-let s2 = pres.addSlide();
+-s2.background = { color: "F8FAFC" };
+-
+-// Top accent bar
+-s2.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 0.06, fill: { color: ACCENT } });
+-
+-// Title background block
+-s2.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0.06, w: 10, h: 0.9, fill: { color: DARK } });
+-s2.addText("The Hybrid Thesis", { x: 0.5, y: 0.15, w: 5, h: 0.5, fontSize: 30, bold: true, color: WHITE, fontFace: "Calibri" });
+-s2.addText("Why \"hybrid,\" not \"local replaces cloud.\"",    { x: 0.5, y: 0.55, w: 7, h: 0.4, fontSize: 14, italic: true, color: ACCENT, fontFace: "Calibri" });
+-
+-// Left column title
+-s2.addText("What Goes Local", { x: 0.5, y: 1.2, w: 4.2, h: 0.45, fontSize: 20, bold: true, color: ACCENT, fontFace: "Calibri" });
+-s2.addText([
+-  { text: "Sensitive document Q&A & RAG \u2014 data never leaves premises",            options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
+-  { text: "Internal copilots tuned to company vocabulary & tooling",             options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
+-  { text: "Code assistance on private repos \u2014 zero leakage risk",             options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
+-  { text: "Factory floor & retail edge \u2014 latency-critical, offline-capable",  options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
+-  { text: "Compliance pipelines (PHI, financial, government data)",              options: { bullet: true, fontSize: 14, color: TEXT, fontFace: "Calibri" } }
+-], { x: 0.5, y: 1.7, w: 4.5, h: 3.2 });
+-
+-// Right column title
+-s2.addText("What Stays Cloud", { x: 5.2, y: 1.2, w: 4.3, h: 0.45, fontSize: 20, bold: true, color: DARK, fontFace: "Calibri" });
+-s2.addText([
+-  { text: "Frontier-tier reasoning on complex tasks",             options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
+-  { text: "Burst traffic overflow beyond on-prem capacity",       options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
+-  { text: "Rapid frontier updates without hardware refresh",      options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
+-  { text: "General-purpose tasks lacking sensitive data",         options: { bullet: true, fontSize: 14, color: TEXT, breakLine: true, fontFace: "Calibri" } },
+-  { text: "Cross-functional research & creative work",           options: { bullet: true, fontSize: 14, color: TEXT, fontFace: "Calibri" } }
+-], { x: 5.2, y: 1.7, w: 4.3, h: 3.2 });
+-
+-// Vertical divider
+-s2.addShape(pres.shapes.LINE, { x: 4.95, y: 1.2, w: 0.02, h: 3.5, line: { color: "E2E8F0", width: 2 } });
+-
+-// Central insight
+-const makeInsightBg = () => ({ color: ACCENT });
+… omitted 390 diff line(s) across 1 additional file(s)/section(s)
+  ┊ review diff
+a//home/baba-y/create_deck.js → b//home/baba-y/create_deck.js
+@@ -155,7 +155,7 @@
+ 
+   strategies.forEach((s, i) => {
+     let xPos = i * 3.1 + 0.4;
+-    s4.addShape(pres.shapes.RECTANGLE, { x: xPos, y: 1.2, w: 2.8, h: 3.3, fill: { color: "FFF" } });
++    s4.addShape(pres.shapes.RECTANGLE, { x: xPos, y: 1.2, w: 2.8, h: 3.3, fill: { color: "#FFFFFF" } });
+ 
+     s4.addShape(pres.shapes.OVAL, { x: xPos + 0.2, y: 1.35, w: 0.5, h: 0.5, fill: { color: ACCENT } });
+     s4.addText(s.num, { x: xPos + 0.2, y: 1.35, w: 0.5, h: 0.5, fontSize: 18, bold: true, color: WHITE, fontFace: "Calibri", align: "center", valign: "middle", margin: 0 });
+Perfect! The file has been created and saved at `/home/baba-y/llm_presentation_3.pptx` 🎉
+
+Here's what I built for you:
+
+**Slide 1 — Title**
+* "New Opportunities for Local LLMs" with the subtitle "The Hybrid Architecture Is the Real Story"
+
+**Slide 2 — The Hybrid Thesis**
+Split into two columns: "What Goes Local" (sensitive RAG, copilots, edge work) vs. "What Stays Cloud" (frontier reasoning, burst capacity), with the decision principle highlighted at the bottom.
+
+**Slide 3 — Deployment Patterns & Hardware**
+Three tier cards: Workstation/Edge (7-13B, 8-16GB VRAM), Server-Class (30-70B, multi-GPU), and Cloud Bridge (frontier models), plus the 4-bit quantization stat.
+
+**Slide 4 — Strategic Recommendations**
+Three numbered cards: Start narrow, model small first, keep the cloud bridge.
+
+**Slide 5 — Market Outlook & Forecasts**
+Side-by-side forecast boxes: Edge AI ($24.9B → $118.7B by 2033) and LLM Market ($10.97B → $32.5B by 2030), both with chart/placeholders for source attribution.
+
+The file is ready to open in PowerPoint or Google Slides. Want me to:
+- Adjust any content/slide layout?
+- Add speaker notes?
+- Export to a different location?

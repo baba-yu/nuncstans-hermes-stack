@@ -1,0 +1,137 @@
+↻ Resumed session 20260421_140844_ff476f (4 user messages, 16 total messages)
+  ┊ review diff
+a/create_llm_deck.py → b/create_llm_deck.py
+@@ -0,0 +1,9 @@
++from pptx import Presentation
++from pptx.util import Inches, Pt, Emu
++from pptx.dml.color import RGBColor
++from pptx.enum.text import PP_ALIGN
++import copy
++
++prs = Presentation()
++prs.slide_width = Inches(13.333)
++pr
+  ┊ review diff
+a/create_llm_deck.py → b/create_llm_deck.py
+@@ -2,8 +2,282 @@
+ from pptx.util import Inches, Pt, Emu
+ from pptx.dml.color import RGBColor
+ from pptx.enum.text import PP_ALIGN
+-import copy
++from pptx.enum.shapes import MSO_SHAPE
+ 
+ prs = Presentation()
+-prs.slide_width = Inches(13.333)
+-pr+
++# ── palette ──
++NAVY   = RGBColor(0x08, 0x0F, 0x1F)
++DEEP  = RGBColor(0x0D, 0x1B, 0x2F)
++ACCENT= RGBColor(0x00, 0xD4, 0xFF)
++WHITE = RGBColor(0xFF, 0xFF, 0xFF)
++MUTED = RGBColor(0x88, 0xA0, 0xAA)
++CARD_BK = RGBColor(0x14, 0x1F, 0x33)
++GREEN = RGBColor(0x00, 0xE8, 0x84)
++YELLOW= RGBColor(0xFF, 0xE5, 0x5A)
++ORANGE= RGBColor(0xFF, 0x9F, 0x1C)
++
++WHITE_CLR = RGBColor(0xFF, 0xFF, 0xFF)
++LIGHT_GRAY = RGBColor(0xE8, 0xEC, 0xF0)
++
++def set_slide_bg(slide, color):
++    bg = slide.background
++    fill = bg.fill
++    fill.solid()
++    fill.fore_color.rgb = color
++
++def add_textbox(slide, left, top, width, height, text, font_size=18,
++                color=WHITE, bold=False, alignment=PP_ALIGN.LEFT, font_name="Calibri"):
++    txBox = slide.shapes.add_textbox(Inches(left), Inches(top),
++                                      Inches(width), Inches(height))
++    tf = txBox.text_frame
++    tf.word_wrap = True
++    p = tf.paragraphs[0]
++    p.alignment = alignment
++    p.font.size = Pt(font_size)
++    p.font.color.rgb = color
++    p.font.bold = bold
++    p.font.name = font_name
++    p.text = text
++    return txBox
++
++def make_card(slide, left, top, width, height, fill_color=CARD_BK):
++    shape = slide.shapes.add_shape(
++        MSO_SHAPE.ROUNDED_RECTANGLE,
++        Inches(left), Inches(top), Inches(width), Inches(height)
++    )
++    shape.shadow.inherit = False
++    fill = shape.fill
++    fill.solid()
++    fill.fore_color.rgb = fill_color
++    line = shape.line
++    line.fill.background()
++    # slight border
++    line.color.rgb = RGBColor(0x1A, 0x2A, 0x45)
++    line.width = Pt(1)
++    return shape
++
++def add_multi(slide, left, top, width, height, lines, font_size=16,
++              color=WHITE, bold_lines=None, font_name="Calibri"):
++    txBox = slide.shapes.add_textbox(Inches(left), Inches(top),
++                                      Inches(width), Inches(height))
++    tf = txBox.text_frame
++    tf.word_wrap = True
++    for i, txt in enumerate(lines):
++        if i == 0:
++            p = tf.paragraphs[0]
++        else:
++            p = tf.add_paragraph()
++        p.alignment = PP_ALIGN.LEFT
++        p.font.size = Pt(font_size)
++        p.font.color.rgb = color
++        p.font.name = font_name
++        if bold_lines and i in bold_lines:
++            p.font.bold = True
++        else:
+… omitted 206 diff line(s) across 1 additional file(s)/section(s)
+  ┊ review diff
+a//home/baba-y/nuncstans-hermes-stack/create_llm_deck.py → b//home/baba-y/nuncstans-hermes-stack/create_llm_deck.py
+@@ -203,7 +203,7 @@
+             font_size=30, color=WHITE, bold=True, alignment=PP_ALIGN.LEFT)
+ 
+ add_textbox(s4, 0.8, 1.2, 11.7, 0.5,
+-            "No single "Local LLM" category exists — use market proxies to gauge scale",
++            'No single "Local LLM" category exists \u2014 use market proxies to gauge scale',
+             font_size=16, color=MUTED, alignment=PP_ALIGN.LEFT)
+ 
+ # Two big number cards
+  ┊ review diff
+a//home/baba-y/nuncstans-hermes-stack/create_llm_deck.py → b//home/baba-y/nuncstans-hermes-stack/create_llm_deck.py
+@@ -203,7 +203,7 @@
+             font_size=30, color=WHITE, bold=True, alignment=PP_ALIGN.LEFT)
+ 
+ add_textbox(s4, 0.8, 1.2, 11.7, 0.5,
+-            'No single "Local LLM" category exists \u2014 use market proxies to gauge scale',
++            'No single "Local LLM" category exists \u2014 use market proxies to gauge scale"',
+             font_size=16, color=MUTED, alignment=PP_ALIGN.LEFT)
+ 
+ # Two big number cards
+  ┊ review diff
+a//home/baba-y/nuncstans-hermes-stack/create_llm_deck.py → b//home/baba-y/nuncstans-hermes-stack/create_llm_deck.py
+@@ -203,7 +203,7 @@
+             font_size=30, color=WHITE, bold=True, alignment=PP_ALIGN.LEFT)
+ 
+ add_textbox(s4, 0.8, 1.2, 11.7, 0.5,
+-            'No single "Local LLM" category exists \u2014 use market proxies to gauge scale"',
++            'No single "Local LLM" category exists \u2014 use market proxies to gauge scale',
+             font_size=16, color=MUTED, alignment=PP_ALIGN.LEFT)
+ 
+ # Two big number cards
+Perfect — the extra quote is cleaned up. The presentation `llm_presentation_4.pptx` is ready with 5 slides:
+
+1. **New Opportunities for Local LLMs** — title slide
+2. **The Reality: Hybrid Deployment, Not Replacement** — why local makes sense
+3. **Operational Use Cases** — 5 specific workflows
+4. **Market Indicators & Timing** — Edge AI and LLM market data with vendor citation placeholders
+5. **Strategic Recommendations** — 3 concrete steps
+
+It's saved in the current working directory at `/home/baba-y/nuncstans-hermes-stack/llm_presentation_4.pptx`.

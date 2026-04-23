@@ -1,0 +1,110 @@
+  ┊ review diff
+a//tmp/gen_deck.js → b//tmp/gen_deck.js
+@@ -0,0 +1,448 @@
++const pptxgen = require("pptxgenjs");
++const React = require("react");
++const ReactDOMServer = require("react-dom/server");
++const sharp = require("sharp");
++const { FaCpu, FaChartLine, FaShieldAlt, FaGlobe, FaRocket, FaLock, FaServer, FaBrain } = require("react-icons/fa");
++
++// Icon helper
++function renderIconSvg(IconComponent, color = "#000000", size = 256) {
++  return ReactDOMServer.renderToStaticMarkup(
++    React.createElement(IconComponent, { color, size: String(size) })
++  );
++}
++
++async function iconToBase64Png(IconComponent, color, size = 256) {
++  const svg = renderIconSvg(IconComponent, color, size);
++  const pngBuffer = await sharp(Buffer.from(svg)).png().toBuffer();
++  return "image/png;base64," + pngBuffer.toString("base64");
++}
++
++async function main() {
++  let pres = new pptxgen();
++  pres.layout = "LAYOUT_16x9";
++  pres.author = "Yuki";
++  pres.title = "New Opportunities for Local LLMs";
++  pres.subject = "Local LLM Market Analysis";
++
++  // Color palette: dark navy background, ice blue and teal accents
++  const BG_DARK = "1E2761";
++  const BG_DEEP = "0F172A";
++  const ICE_BLUE = "CADCFC";
++  const ICE_LT = "E0E8FF";
++  const MINT = "00C9A7";
++  const TEAL = "08A5A5";
++  const TEAL_LT = "2DD4BF";
++  const WHITE = "FFFFFF";
++  const TEXT_MID = "94A3B8";
++  const TEXT_DARK = "64748B";
++
++  // ---- ICONS ----
++  const icons = {
++    cpu: await iconToBase64Png(FaCpu, WHITE, 256),
++    chart: await iconToBase64Png(FaChartLine, TEAL_LT, 256),
++    shield: await iconToBase64Png(FaShieldAlt, WHITE, 256),
++    globe: await iconToBase64Png(FaGlobe, TEAL_LT, 256),
++    rocket: await iconToBase64Png(FaRocket, TEAL_LT, 256),
++    lock: await iconToBase64Png(FaLock, ICE_BLUE, 256),
++    server: await iconToBase64Png(FaServer, MINT, 256),
++    brain: await iconToBase64Png(FaBrain, TEAL_LT, 256),
++  };
++
++  // ---- SLIDE 1: Title Slide ----
++  {
++    let slide = pres.addSlide();
++    slide.background = { color: BG_DARK };
++
++    // Top accent line
++    slide.addShape(pres.shapes.RECTANGLE, {
++      x: 0, y: 0, w: "100%", h: 0.06, fill: { color: TEAL }
++    });
++
++    // Subtle bottom accent
++    slide.addShape(pres.shapes.RECTANGLE, {
++      x: 0, y: 5.565, w: "100%", h: 0.06, fill: { color: TEAL }
++    });
++
++    // Central decorative teal circle
++    slide.addShape(pres.shapes.OVAL, {
++      x: 4.2, y: 1.5, w: 1.6, h: 1.6,
++      fill: { color: TEAL, transparency: 90 }
++    });
++
++    // Brain icon in circle
++    slide.addImage({ data: icons.brain, x: 4.6, y: 1.9, w: 0.8, h: 0.8 });
++
++    // Title
++    slide.addText("New Opportunities", {
++      x: 0.8, y: 1.8, w: 8.4, h: 1.2, fontSize: 44, fontFace: "Calibri",
++      color: WHITE, bold: true, align: "center", valign: "middle"
+… omitted 370 diff line(s) across 1 additional file(s)/section(s)
+  ┊ review diff
+a//tmp/gen_deck.js → b//tmp/gen_deck.js
+@@ -374,7 +374,6 @@
+     ];
+ 
+     for (let i = 0; i < bullets.length; i++) {
+-      let dotIcons = icons.mint_icon || icons.teal;
+       slide.addImage({ data: icons.teal, x: 2.8, y: 2.8 + i * 0.55, w: 0.4, h: 0.4 });
+       slide.addText(bullets[i], {
+         x: 3.4, y: 2.8 + i * 0.55, w: 5.5, h: 0.5, fontSize: 16, fontFace: "Calibri",
+  ┊ review diff
+a//tmp/gen_deck.js → b//tmp/gen_deck.js
+@@ -374,9 +374,13 @@
+     ];
+ 
+     for (let i = 0; i < bullets.length; i++) {
+-      slide.addImage({ data: icons.teal, x: 2.8, y: 2.8 + i * 0.55, w: 0.4, h: 0.4 });
++      let yBase = 2.8 + i * 0.55;
++      slide.addShape(pres.shapes.RECTANGLE, {
++        x: 2.75, y: yBase + 0.05, w: 0.35, h: 0.4,
++        fill: { color: TEAL }
++      });
+       slide.addText(bullets[i], {
+-        x: 3.4, y: 2.8 + i * 0.55, w: 5.5, h: 0.5, fontSize: 16, fontFace: "Calibri",
++        x: 3.2, y: yBase, w: 6.0, h: 0.5, fontSize: 16, fontFace: "Calibri",
+         color: WHITE, valign: "middle"
+       });
+     }

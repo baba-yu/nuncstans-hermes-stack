@@ -1,0 +1,58 @@
+↻ Resumed session 20260421_121303_2b1296 (3 user messages, 6 total messages)
+Those are excellent additions — the market data gives the report financial grounding to show this isn't just a technical trend, it's a capital market play. It also helps justify the investment in hardware against a projected 7–12x growth in edge AI.
+
+Here is the updated outline with those sections integrated:
+
+---
+
+## Report Outline: Hybrid LLM Deployment
+
+**1. Introduction**
+   - The hybrid reality: local LLMs + cloud APIs working together
+   - Why organizations don't fully replace cloud
+
+**2. The Hybrid Architecture Pattern**
+   - **Local path**: sensitive RAG, internal copilots, code assistants, factory/edge inference
+   - **Cloud path**: frontier-tier reasoning, burst traffic, general-purpose tasks
+   - Decision flow: routing queries between paths
+
+**3. Operational Drivers for Local Inference**
+   - **Latency**: no API round-trip for real-time workflows
+   - **Data Governance**: proprietary data never leaves premises
+   - **Reliability**: works when network goes down
+   - **Cost**: fixed hardware vs. per-token billing at scale
+
+**4. Common Local Deployment Patterns**
+   - RAG-based knowledge systems (internal wikis, SOPs)
+   - Internal copilots & code assistants
+   - Edge workflows (factory line, retail, field agents)
+   - Compliance pipelines (healthcare, finance, government)
+
+**5. Hardware Feasibility**
+   - What fits on a workstation (RTX 3060/4080/5080 class)
+   - Quantized 7B–13B models as the sweet spot
+   - When multi-GPU or CPU offloading is required
+   - Server-class vs. edge deployments
+
+**6. Strategic Recommendations**
+   - **Start Narrow**: pick high-value use cases (sensitive data, repeat workflows, ROI)
+   - **Model Selection**: use small/mid-sized open models first
+   - **Keep the Bridge**: always maintain the hybrid path for hard tasks
+   - **Tuning**: focus on fine-tuning for internal vocabulary and tooling
+
+**7. Market Outlook**
+   - **Edge AI Market Proxy**: ~$24.91B (2025) $\rightarrow$ $118.69B (2033)
+   - **Broader LLM Market**: ~$10.97B (2026) $\rightarrow$ $32.5B (2030)
+   - Interpretation: local deployment is the infrastructure underpinning this growth
+
+**8. Limitations & Risks**
+   - Capability gap (7B vs. frontier models on complex logic)
+   - Hardware costs at enterprise scale
+   - Operational burden (updates, monitoring, security)
+
+---
+
+### Suggested Next Step
+Since you’ve now provided the core market data and the strategic advice, I can write the **Executive Summary** right now. It would effectively be a consolidated version of the introduction, market analysis, and strategic recommendations—written as a high-level brief for decision-makers.
+
+Would you like me to draft that?

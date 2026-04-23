@@ -1,0 +1,32 @@
+↻ Resumed session 20260421_094646_216a02 (3 user messages, 8 total messages)
+Great data points for the report. Here's how I'd structure this section:
+
+---
+
+## Market Landscape & Strategic Recommendations
+
+### Market Size (2025-2033 Estimates)
+
+| Metric | 2025/2026 | 2030/2033 | CAGR |
+|--------|-----------|-----------|------|
+| Edge AI market (proxy for local LLMs) | $24.91B | $118.69B (2033) | ~22% |
+| Broader LLM market | $10.97B (2026) | $32.5B (2030) | ~31% |
+
+*No universally accepted "local LLM" category exists in vendor reports. Edge AI revenue is the pragmatic proxy.*
+
+---
+
+### Strategic Recommendations
+
+**1. Start narrow, not broad.** Pick *one* high-signal use case:
+   - Sensitive document Q&A (compliance data stays on-prem)
+   - Repeated internal workflow assistant (documented ROI)
+   - Factory/retail edge deployments (offline operation requirements)
+
+**2. Small/mid open models first.** 7B-14B parameter models are sufficient for 70-80% of enterprise tasks when properly fine-tuned or prompted. Don't over-provision.
+
+**3. Architect for hybrid from day one.** The cloud isn't going to be replaced locally for most orgs. The question is routing: "80% of queries handled locally + 20% escalated to cloud for ambiguous/hard tasks."
+
+---
+
+For the actual report format - are you compiling this into a **markdown document**, **Obsidian notes**, or something else? If you have specific sections you want to fill out, I can draft content for each. Also, do you have source citations for those market numbers, or should I flag them as "industry estimates" without specific vendor attribution?

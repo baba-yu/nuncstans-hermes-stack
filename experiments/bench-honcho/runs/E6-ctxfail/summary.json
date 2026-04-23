@@ -1,0 +1,26 @@
+{
+  "experiment": 6,
+  "honcho_variant": "bonsai",
+  "inference_model": "bonsai-8b",
+  "bonsai": {
+    "parallel": 2,
+    "ctx": 32768,
+    "needed": true
+  },
+  "ollama": {
+    "overhead": 8589934592,
+    "max_loaded": 1
+  },
+  "wall_seconds": 2.928440605,
+  "drain_seconds": 0.343929331,
+  "total_seconds": 3.272369936,
+  "deriver_queue_rows": 0,
+  "observations_created": 0,
+  "exit_code": 134,
+  "pptx": {
+    "ok": false,
+    "path": "/home/baba-y/nuncstans-hermes-stack/llm_presentation_6.pptx",
+    "error": "file not found"
+  },
+  "start_iso": "2026-04-21T04:28:40-07:00"
+}

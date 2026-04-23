@@ -1,0 +1,18 @@
+Hi Yuki! I can see from our past sessions that we've done quite a bit of work together already today:
+
+What we've covered so far:
+1. **Report outline** - Market landscape, technical foundations, deployment patterns, case studies
+2. **PowerPoint deck** (`llm_presentation_2.pptx`, 5 slides, "Midnight Executive" theme) - Title, Market Landscape (Edge AI $24.91B→$118.69B, LLM $10.97B→$32.5B), Hybrid Architecture, Use Cases, Strategic Recommendations
+3. **Full report draft** on "Local Large Language Models: Enterprise-Side Deployment" covering quantization (GGUF), inference engines, hardware analysis for 16GB VRAM, deployment strategies, fine-tuning (LoRA/QLoRA), and security
+
+Unresolved items from last time:
+- RTX 5080 benchmarks we should add
+- Timeline updates to 2026
+- Specific enterprise domain use cases
+- Audience/tone confirmation
+- Slide 2 had a `[CONFIDENTIAL_DATA]` placeholder still there
+
+What would you like to focus on today? Are we:
+- Expanding or revising the existing report?
+- Creating a new report on a different topic?
+- Refining the PowerPoint?

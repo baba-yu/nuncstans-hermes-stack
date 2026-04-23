@@ -1,0 +1,1 @@
+Create a sample deck with 5 slides. This PowerPoint is for presenting "New Opportunities for Local LLMs." Although it should include forecasts with quantitative evaluation, you can place placeholders for those sections. The file name should be "llm_presentation_1.pptx". Save it in the current working directory.
