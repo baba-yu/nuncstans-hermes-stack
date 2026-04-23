@@ -21,7 +21,7 @@ This outer repo pins three git submodules — all the actual code lives in the l
 | Submodule | URL | Branch | Notes |
 |---|---|---|---|
 | `honcho/` | `baba-yu/nuncstans-honcho` | `dev` | Fork of `plastic-labs/honcho` with the gatekeeper classifier, peer-filtered deriver, `supersede_observations` tool, 768-dim vector columns, relaxed vector-dim validator, and the `tool_choice: "any"` → `"required"` normalization patch that makes dialectic/deriver work against llama.cpp's OpenAI-compatible server. |
-| `llama.cpp/` | `PrismML-Eng/llama.cpp` | `master` | Upstream PrismML fork of llama.cpp. Source for the `llama-server` binary that serves both the Qwen3.6 chat model and the nomic-embed-text embedding model. Unmodified. (The submodule was previously checked out at `bonsai-llama.cpp/` back when it hosted Bonsai-8B; see `experiments/bonsai-archive.md` if you are reading older commits and wondering where the `bonsai-llama.cpp/` directory went.) |
+| `llama.cpp/` | `ggml-org/llama.cpp` | `master` | Upstream llama.cpp. Source for the `llama-server` binary that serves both the Qwen3.6 chat model and the nomic-embed-text embedding model. Unmodified. (Up through 2026-04 this pointed at `PrismML-Eng/llama.cpp` on a `prism` branch carrying Q1_0 quantization patches needed by Bonsai-8B; since Bonsai-8B is archived, we switched to upstream — see `experiments/llamacpp-upstream-migration.md`. The submodule was also previously checked out at `bonsai-llama.cpp/`; see `experiments/bonsai-archive.md` if you are reading older commits.) |
 | `honcho-self-hosted/` | `elkimek/honcho-self-hosted` | `main` | Upstream config overlay for running vanilla `plastic-labs/honcho`. Kept as the alternative stack (see [Switching stacks](#switching-between-the-gatekeeper-stack-and-upstream-honcho)). Unmodified. |
 
 **Clone with submodules:**
@@ -196,7 +196,7 @@ Everything below runs inside **WSL2 Ubuntu**. The working directory is `$HOME/nu
 
 ### Step 1. Build `llama-server` with `$ORIGIN` RPATH
 
-The PrismML fork of `llama.cpp` is already checked out at `llama.cpp/` by the recursive submodule clone. Build it **with CUDA on**.
+Upstream `ggml-org/llama.cpp` is already checked out at `llama.cpp/` by the recursive submodule clone. Build it **with CUDA on**.
 
 ```bash
 cd "$HOME/nuncstans-hermes-stack/llama.cpp"
