@@ -613,6 +613,70 @@ cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose down
 cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose up -d
 ```
 
+## Switching endpoints / models
+
+`scripts/switch-endpoints.py` is a conversational CLI that swaps Honcho's and Hermes's LLM backends
+(and the local `llama-server` model, when desired) under a snapshot + auto-rollback envelope. It
+runs via `uv run --script` — deps (`tomlkit`, `ruamel.yaml`, `httpx`, `questionary`) are declared in
+the script header and installed on first invocation.
+
+```bash
+# Preview-only: walk the picker, print the TOML / .conf diffs, no writes, no restarts.
+./scripts/switch-endpoints.py --dry-run
+
+# Real run: pick endpoints + models interactively, confirm the diff, write, and (optionally) restart
+# the affected services when prompted.
+./scripts/switch-endpoints.py
+
+# Snapshot management (up to 10 most-recent are kept automatically).
+./scripts/switch-endpoints.py --list-snapshots
+./scripts/switch-endpoints.py --rollback              # restore from the most recent snapshot
+./scripts/switch-endpoints.py --restore <id>          # restore from a specific one (id from --list-snapshots)
+```
+
+The interactive flow asks four things, in order:
+
+1. **Honcho chat endpoint + model** — applies to all 9 chat blocks (`deriver`, the five `dialectic.levels.*`,
+   `summary`, `dream.deduction_model_config`, `dream.induction_model_config`).
+2. **Honcho embedding endpoint + model** — applies to `[embedding.model_config]`. If the chosen model's
+   vector dim differs from the running pgvector column dim, the switcher aborts this axis with a
+   warning rather than risk breaking the store.
+3. **Hermes chat endpoint + model** — "same as Honcho / different URL / leave alone". When confirmed,
+   also offered to add the model to `providers.<name>.models` so it appears in `hermes model`'s picker.
+4. **llama-server model (optional)** — if the Honcho chat endpoint resolves to the local `llama-server`
+   and you want a different model loaded, the switcher probes the target (via `/v1/models` meta or
+   `ollama /api/show`), proposes `-c` / `-ngl` / `-ot` / `--reasoning` / `--parallel` based on the model's
+   context window and MoE/dense arch, and writes `scripts/llama-services.conf`.
+
+Before any write the script takes a coherent snapshot of the three affected files under
+`~/.local/state/hermes-stack/endpoint-snapshots/<timestamp>.<pid>/` with a `manifest.json`. If any
+write or the subsequent service restart fails, it auto-rolls-back all three files atomically. If the
+restart succeeds, the manifest is flipped to `status="applied"` and the snapshot remains in the LRU
+for later inspection or manual `--restore`.
+
+The two restart targets the switcher may trigger (after confirming):
+
+```bash
+# When honcho/config.toml changed:
+docker compose -f honcho/docker-compose.yml up -d --force-recreate api deriver
+
+# When scripts/llama-services.conf changed:
+./scripts/llama-services.sh restart
+```
+
+Ollama caveats the switcher warns about when you point Hermes or Honcho at `:11434`:
+
+- **Context ceiling** — Ollama's OpenAI-compat `/v1/chat/completions` has no per-request `num_ctx`.
+  The service-wide `OLLAMA_CONTEXT_LENGTH` env (in the systemd drop-in) caps every request; prompts
+  above it are silently truncated. The switcher reads the current ceiling and caps Honcho's
+  `GET_CONTEXT_MAX_TOKENS` / `MAX_INPUT_TOKENS` accordingly.
+- **Qwen3 `think` flag** — `/v1/chat/completions` has no `think` field, so Hermes and Honcho can't
+  suppress qwen3's invisible reasoning tokens from the wire. Use an Ollama Modelfile with
+  `PARAMETER think false` to bake the flag in; the switcher surfaces the command when you pick a
+  `qwen3*` model from Ollama.
+- **Tool calling stability** — the OpenAI-compat tool-call path through Ollama is model-dependent;
+  `llama-server --jinja` is the more reliable route for Hermes's skill tools.
+
 ## Smoke test
 
 Confirm `hermes doctor` is all green, then follow the "chat and watch memory grow" procedure below to verify end-to-end.
