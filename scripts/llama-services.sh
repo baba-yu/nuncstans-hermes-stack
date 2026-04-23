@@ -124,7 +124,7 @@ start_chat() {
     nohup "$LLAMA_BUILD/llama-server" \
         -hf "$HF_CHAT_SPEC" \
         --host 0.0.0.0 --port 8080 \
-        -c 65536 \
+        -c 131072 \
         -fa on \
         -ctk q8_0 -ctv q8_0 \
         --jinja \
