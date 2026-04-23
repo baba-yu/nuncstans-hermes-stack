@@ -904,12 +904,21 @@ def _print_current_state() -> None:
 
 
 def _prompt_endpoint(
-    label: str, *, default_url: str, allow_llama_model_change: bool = False
+    label: str, *, default_url: str, allow_llama_model_change: bool = False,
+    for_embed: bool = False,
 ) -> tuple[str, bool]:
-    """Return (chosen_host_url, wants_llama_model_change). Empty chosen_host_url = skip."""
+    """Return (chosen_host_url, wants_llama_model_change). Empty chosen_host_url = skip.
+
+    for_embed=True: offer the :8081 embed server instead of :8080 chat, since
+    the chat server does not serve /embeddings and its n_embd reflects the
+    chat model's hidden size rather than an embedding dim.
+    """
+    llama_port = 8081 if for_embed else 8080
+    llama_url = f"http://localhost:{llama_port}/v1"
+    llama_label = "llama-server (embed, :8081)" if for_embed else "llama-server (chat,  :8080)"
     choices = [
-        questionary.Choice("llama-server (http://localhost:8080/v1)", value="ll"),
-        questionary.Choice("ollama       (http://localhost:11434/v1)", value="ol"),
+        questionary.Choice(f"{llama_label} — {llama_url}", value="ll"),
+        questionary.Choice(f"ollama                  — http://localhost:{OLLAMA_PORT_HINT}/v1", value="ol"),
         questionary.Choice("custom URL...", value="custom"),
         questionary.Choice(f"no change (keep {default_url or '<empty>'})", value="keep"),
     ]
@@ -927,21 +936,22 @@ def _prompt_endpoint(
     if pick == "keep":
         return (default_url or "", False)
     if pick == "ll":
-        return ("http://localhost:8080/v1", False)
+        return (llama_url, False)
     if pick == "ol":
         return (f"http://localhost:{OLLAMA_PORT_HINT}/v1", False)
     if pick == "llama_swap":
         return ("http://localhost:8080/v1", True)
     # custom
     url = questionary.text(
-        f"{label} — base URL (include /v1)", default=default_url or "http://localhost:8080/v1"
+        f"{label} — base URL (include /v1)", default=default_url or llama_url
     ).ask()
     if url is None:
         raise KeyboardInterrupt
     return (normalize_base(url), False)
 
 
-def _pick_model(base_url: str, *, purpose: str, default_model: str) -> str:
+def _pick_model(base_url: str, *, purpose: str, default_model: str,
+                embed_filter: bool = False) -> str:
     models = probe_models(base_url)
     if not models:
         cprint("warn", "could not list models; enter manually")
@@ -955,6 +965,16 @@ def _pick_model(base_url: str, *, purpose: str, default_model: str) -> str:
         if m is None:
             raise KeyboardInterrupt
         return m.strip()
+    # For the embed axis, most backends list chat models too. Prefer
+    # name-based filtering (fast, no extra API calls) and fall back to the
+    # full list if the heuristic produces nothing.
+    if embed_filter:
+        markers = ("embed", "embedding", "bge-", "e5-", "gte-", "bert")
+        filtered = [x for x in ids if any(m in x.lower() for m in markers)]
+        if filtered:
+            ids = filtered
+        else:
+            cprint("warn", "no embedding-looking models found by name; showing all")
     choices = [questionary.Choice(x, value=x) for x in ids] + [
         questionary.Choice("<enter manually>", value="__manual__"),
     ]
@@ -1033,10 +1053,11 @@ def _pick_honcho_chat(plan: PlannedChanges, current_url: str, current_model: str
 
 def _pick_honcho_embed(plan: PlannedChanges, current_url: str, current_model: str,
                        current_dim: int) -> None:
-    url_host, _ = _prompt_endpoint("B: Honcho embed", default_url=current_url)
+    url_host, _ = _prompt_endpoint("B: Honcho embed", default_url=current_url, for_embed=True)
     if not url_host:
         return
-    model = _pick_model(url_host, purpose="Honcho embed", default_model=current_model)
+    model = _pick_model(url_host, purpose="Honcho embed", default_model=current_model,
+                       embed_filter=True)
     meta = probe_model_meta(url_host, model)
     if meta and meta.n_embd and current_dim and meta.n_embd != current_dim:
         cprint(
