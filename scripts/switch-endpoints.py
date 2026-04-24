@@ -1188,12 +1188,45 @@ def _prompt_endpoint(
     return (normalize_base(url), False)
 
 
+def _llama_alias_default(base_url: str, *, embed_filter: bool) -> str | None:
+    """When the chosen endpoint is our local llama-server (:8080 chat or
+    :8081 embed), read scripts/llama-services.conf and return the alias
+    it serves. This gives a useful manual-input default when the server
+    is currently stopped (probe fails) but the user is switching
+    *toward* it — the lifecycle step will `start chat` / `start embed`
+    and the alias is what the server will advertise once up."""
+    try:
+        port = urlparse(normalize_base(base_url)).port or 0
+    except ValueError:
+        return None
+    try:
+        conf = read_llama_conf()
+    except Exception:  # noqa: BLE001
+        return None
+    if embed_filter and port == 8081:
+        return conf.get("EMBED_ALIAS")
+    if not embed_filter and port == 8080:
+        return conf.get("CHAT_ALIAS")
+    return None
+
+
 def _pick_model(base_url: str, *, purpose: str, default_model: str,
                 embed_filter: bool = False) -> str:
     models = probe_models(base_url)
     if not models:
-        cprint("warn", "could not list models; enter manually")
-        m = questionary.text(f"{purpose} — model id", default=default_model).ask()
+        alias = _llama_alias_default(base_url, embed_filter=embed_filter)
+        hint = default_model
+        if alias and alias != default_model:
+            cprint(
+                "info",
+                f"endpoint unreachable; using llama-services.conf alias "
+                f"'{alias}' as the default (the lifecycle step will start "
+                f"the server once you confirm)",
+            )
+            hint = alias
+        else:
+            cprint("warn", "could not list models; enter manually")
+        m = questionary.text(f"{purpose} — model id", default=hint).ask()
         if m is None:
             raise KeyboardInterrupt
         return m.strip()

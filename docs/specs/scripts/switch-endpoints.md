@@ -261,6 +261,22 @@ only (leaves chat / hermes / llama axes intact) and prints a message
 telling the operator that a pgvector migration is required. It will not
 attempt the migration itself.
 
+### Unreachable-endpoint manual-entry default
+
+When the endpoint picked for Axis A / B is the local llama-server
+(`:8080` chat or `:8081` embed) and the server is currently stopped,
+`/v1/models` fails with connection-refused and the picker falls back
+to `questionary.text` for manual model-id entry. The default value for
+that prompt used to be the *previous* axis model, which is almost
+certainly wrong (e.g. switching from `qwen3.5:9b@ollama` onto
+`llama-server:8080` would pre-fill `qwen3.5:9b`, not the alias the
+server will actually advertise). The switcher now reads
+`scripts/llama-services.conf` and defaults to `CHAT_ALIAS` /
+`EMBED_ALIAS` in that case — the same alias the server will expose
+once the subsequent lifecycle step (`start chat` / `start embed`)
+brings it up. For other endpoints (ollama, custom URLs) the previous
+axis model is still used as the default.
+
 ### Container-visible config via bind mount
 
 Honcho's upstream Dockerfile bakes `honcho/config.toml` into
