@@ -20,7 +20,8 @@ Subcommands:
   --list-snapshots     show the 10 most recent snapshots with summaries
 
 Safety: before the first write the script takes a coherent snapshot of all
-affected files under ~/.local/state/hermes-stack/endpoint-snapshots/. On any
+affected files under ~/.local/state/nuncstans-hermes-stack/endpoint-snapshots/
+(override via $HERMES_STATE_DIR). On any
 write- or restart- error it promotes auto-rollback (atomic os.replace of each
 file, status=rolled_back in manifest). LRU pruned to 10 entries at startup.
 """
@@ -61,7 +62,10 @@ LLAMA_RESTART_SH = REPO_ROOT / "scripts" / "llama-services.sh"
 HONCHO_COMPOSE = REPO_ROOT / "honcho" / "docker-compose.yml"
 HERMES_YAML = Path(os.environ.get("HERMES_YAML_OVERRIDE", Path.home() / ".hermes" / "config.yaml"))
 
-SNAPSHOT_ROOT = Path.home() / ".local" / "state" / "hermes-stack" / "endpoint-snapshots"
+_DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "nuncstans-hermes-stack"
+SNAPSHOT_ROOT = Path(
+    os.environ.get("HERMES_STATE_DIR") or _DEFAULT_STATE_DIR
+) / "endpoint-snapshots"
 SNAPSHOT_KEEP = 10
 
 # The 9 chat model_config blocks inside honcho/config.toml.
@@ -1474,7 +1478,8 @@ def main() -> None:
             """
             Interactive LLM endpoint/model switcher for the hermes-stack.
             Writes are snapshot-protected under
-            ~/.local/state/hermes-stack/endpoint-snapshots/ (LRU of 10).
+            ~/.local/state/nuncstans-hermes-stack/endpoint-snapshots/
+            (override: $HERMES_STATE_DIR). LRU of 10.
             """
         ).strip(),
     )

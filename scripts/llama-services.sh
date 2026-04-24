@@ -43,7 +43,11 @@ if [[ -f "$LLAMA_SERVICES_CONF" ]]; then
     source "$LLAMA_SERVICES_CONF"
 fi
 
-LOG_DIR="$HOME/.local/state/hermes-stack"
+# State dir holds pid files, log files, and endpoint-snapshots. Override
+# with HERMES_STATE_DIR to run a second instance on the same host. The
+# default assumes single-instance-per-user (see docs/specs/scripts/
+# llama-services.md for the multi-instance / containerization guidance).
+LOG_DIR="${HERMES_STATE_DIR:-$HOME/.local/state/nuncstans-hermes-stack}"
 mkdir -p "$LOG_DIR"
 
 CHAT_LOG="$LOG_DIR/chat-server.log"

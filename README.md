@@ -125,7 +125,7 @@ What keeps the stack running between reboots. If you're coming back to this repo
 | Gatekeeper daemon | `scripts/gatekeeper_daemon.py` | Classifies pending representation rows → ready / demoted, keeps trivia out of the observation store before the deriver picks them up. Uses the chat `:8080` as its classifier LLM (`GK_LLM_URL` / `GK_LLM_MODEL`). | Started by `./scripts/llama-services.sh start` as the third service (after chat + embed) |
 | Sleep daemon (optional) | `scripts/sleep_daemon.py` | Fires Honcho's Dream consolidation agent on idle / pending-queue / token-count triggers. Not required for correctness; leave off until observation count makes consolidation worthwhile. See `experiments/memory-consolidation.md`. | Optional systemd user service; not part of `llama-services.sh` |
 | Hermes Agent | `~/.hermes/config.yaml` + `~/.hermes/honcho.json` | User-facing CLI. Points main model at `:8080`, memory at `:8000` (Honcho). | `hermes` |
-| Logs + PIDs | `~/.local/state/hermes-stack/{chat,embed,gatekeeper}-{server,}.{log,pid}` | Per-process supervisor state for `llama-services.sh`. Tail via `./scripts/llama-services.sh logs {chat\|embed\|gk}`. | Written by `llama-services.sh` |
+| Logs + PIDs | `~/.local/state/nuncstans-hermes-stack/{chat,embed,gatekeeper}-{server,}.{log,pid}` | Per-process supervisor state for `llama-services.sh`. Tail via `./scripts/llama-services.sh logs {chat\|embed\|gk}`. | Written by `llama-services.sh` |
 
 #### Hermes plugin knobs worth calling out (`~/.hermes/honcho.json`)
 
@@ -249,39 +249,13 @@ cd "$HOME/nuncstans-hermes-stack"
 Expected `status` output (when healthy):
 
 ```
-  chat   pid 12345  port 8080  healthy  log /home/you/.local/state/hermes-stack/chat-server.log
-  embed  pid 12346  port 8081  healthy  log /home/you/.local/state/hermes-stack/embed-server.log
+  chat   pid 12345  port 8080  healthy  log ~/.local/state/nuncstans-hermes-stack/chat-server.log
+  embed  pid 12346  port 8081  healthy  log ~/.local/state/nuncstans-hermes-stack/embed-server.log
 ```
 
-What the script runs (condensed; see `scripts/llama-services.sh` for the canonical version):
+The actual `llama-server` invocation is built from `scripts/llama-services.conf`; the shell script only glues in MoE/reasoning flags conditionally. For the per-flag rationale (`-ot` MoE offload, `--reasoning off` for qwen3, KV partitioning across `--parallel` slots, etc.) see [`docs/specs/scripts/llama-services.md`](docs/specs/scripts/llama-services.md).
 
-```bash
-# embedding server — nomic-embed-text, aliased for Honcho's hardcoded lookup
-llama-server -m "$EMBED_BLOB" --host 0.0.0.0 --port 8081 \
-  --embeddings --alias openai/text-embedding-3-small -ngl 99
-
-# chat server — Qwen3.6-35B-A3B with L6 config from bench-moe-offload
-llama-server -hf unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL \
-  --host 0.0.0.0 --port 8080 \
-  -c 131072 -fa on -ctk q8_0 -ctv q8_0 \
-  --jinja -ngl 99 \
-  -ot "ffn_(up|down|gate)_exps=CPU" \
-  --reasoning off \
-  --parallel 2 \
-  --alias qwen3.6-test
-```
-
-Key flags, briefly:
-
-- `-ngl 99 -ot "ffn_(up|down|gate)_exps=CPU"` — all layers on GPU except the MoE expert FFN tensors, which go to CPU. Gets attention + shared projections onto the GPU (where bandwidth is 3× CPU's) while keeping the 22 GiB of expert weights off-VRAM.
-- `--reasoning off` — neutralizes qwen3's thinking-token leak ([llama.cpp#20099](https://github.com/ggml-org/llama.cpp/issues/20099)). Without this, every token in the completion budget is consumed by invisible reasoning and `message.content` comes back empty.
-- `-c 131072` with `--parallel 2` — total KV budget is split evenly across slots, so each of the two slots gets 65 536 tokens. Hermes sessions can accumulate 4–13k-token prompts (memory context + tool schemas + dialectic result); 65k per slot gives ~5× headroom. Qwen3.6 was trained with 262 144, so the total is well inside its native range. Two slots let Hermes's own chat and Honcho's deriver be in flight concurrently without either one evicting the other's KV.
-- `-fa on -ctk q8_0 -ctv q8_0` — flash attention on, KV cache quantized to q8_0. Halves KV VRAM without visible quality loss at this model size.
-- `--jinja` — required for tool calling; the model's chat template has `{% if tools %}` and only the Jinja path honors it.
-- `--parallel 2` — two concurrent inference slots. See the note above about KV partitioning. One slot serves Hermes's user-facing chat, the other handles Honcho's deriver / dialectic calls when they fire asynchronously mid-turn.
-- `--alias qwen3.6-test` / `--alias openai/text-embedding-3-small` — the logical model names Honcho's config references. If you change these, update `honcho/config.toml` to match.
-
-Logs and PIDs land under `~/.local/state/hermes-stack/` (`chat-server.log`, `chat-server.pid`, and equivalents for `embed-server`).
+Logs and PIDs land under `~/.local/state/nuncstans-hermes-stack/` (override via `HERMES_STATE_DIR`). Single-instance per host is the working assumption — see the spec doc for the multi-instance / containerization guidance.
 
 Smoke test both endpoints:
 
@@ -300,144 +274,33 @@ curl -s http://localhost:8081/v1/embeddings \
 
 ### Step 4. Critical Honcho hyperparameters
 
-Before `docker compose up`, make sure `honcho/config.toml` has the following knobs set — the difference between a stack that **remembers your conversations** and one that looks like it's running but silently does nothing. Every one of them was set wrong by the scaffold defaults when this README was first written, and every one of them produced a distinct confusing failure mode during bring-up.
-
-The fork ships `honcho/config.toml.hermes-example` as a starting template, already populated with the single-engine values for this stack. Materialize it as the live file the container reads:
+Materialize `honcho/config.toml` from the committed template:
 
 ```bash
 cp "$HOME/nuncstans-hermes-stack/honcho/config.toml.hermes-example" \
    "$HOME/nuncstans-hermes-stack/honcho/config.toml"
 ```
 
-The reference TOML in the next section walks through the blocks that file contains, so you know which values are load-bearing if you later edit `config.toml` by hand.
+The template is already tuned for this stack; the four knobs below are the ones that produced distinct silent-failure modes during bring-up and are worth knowing by name:
 
-#### 1. `[deriver] REPRESENTATION_BATCH_MAX_TOKENS`  (scaffold 1024 → **set to 200**)
+| Knob | Value | If wrong |
+|---|---|---|
+| `[deriver] REPRESENTATION_BATCH_MAX_TOKENS` | **200** (scaffold 1024) | deriver never fires on casual chat — messages land in Postgres but no observations, `hermes memory status` stays empty |
+| `[embedding] MAX_INPUT_TOKENS` | **2048** (scaffold 8192) | nomic-embed-text 400s on long messages — Honcho's chunker won't split |
+| `[vector_store] DIMENSIONS = 768`, `MIGRATED = true` | **both must match** | pgvector columns stay at upstream's `Vector(1536)` and every insert rolls back "expected 1536 not 768" |
+| `scripts/sleep_daemon.py` thresholds: `PENDING_THRESHOLD`, `TOKEN_THRESHOLD`, `IDLE_TIMEOUT_MINUTES` | 10 / 1000 / 10 | nap cadence wrong → memory consolidation lags or over-fires; see [`docs/specs/scripts/sleep_daemon.md`](docs/specs/scripts/sleep_daemon.md) |
 
-**The single most important setting for a chat-style deployment.** This is the token threshold the deriver waits for before firing an LLM call. Until the pending messages for a peer/session add up to this many tokens, **no observations are extracted and nothing is ever recalled**. Hermes will happily let you type, save the messages to Postgres, and then act like a goldfish on the next session because the deriver never ran.
+For the full rationale on each of these, and the less-critical knobs (`max_output_tokens`, `MAX_TOOL_ITERATIONS`, fallback-model caveat), see:
 
-- Scaffold default 1024 is tuned for big, dense API-style turns.
-- Typical multi-turn chat ("hi", "how's it going", "what's the weather") stays far below 1024 for an entire session.
-- Dropping it to **200** makes the deriver fire roughly every 2–5 user turns of casual chat.
-- Setting it to 0 disables the gate (together with `FLUSH_ENABLED = true`) and fires on every message — useful for local development / debugging, overkill for production.
-- Symptoms when this is wrong: `hermes memory status` shows `available`, messages are POSTed to Honcho, the `messages` table grows, but `documents` stays empty and the dialectic endpoint always returns "I don't remember anything about you."
-- **Monitoring**: `docker compose exec -T database psql -U honcho -d honcho -c "SELECT count(*) pending, max(now() - created_at) oldest FROM queue WHERE NOT processed;"` — healthy means `pending < 10` and `oldest < 5 min`.
-
-#### 2. `[embedding] MAX_INPUT_TOKENS`  (scaffold 8192 → **set to 2048**)
-
-Must match the embedding model's native context. `nomic-embed-text` is 2048. If this exceeds the model's context, any single message longer than the model's limit gets sent as one oversized chunk and the embedding server returns `400 - the input length exceeds the context length`. Honcho's chunker respects this value and splits accordingly — set it correctly and long messages just get chunked transparently. (Pre-refactor this knob lived at `[app] MAX_EMBEDDING_TOKENS`; upstream moved it under `[embedding]` when `EmbeddingSettings` was split out of `LLMSettings`. The old key is silently ignored by the new code.)
-
-#### 3. `Vector(N)` + `[vector_store] DIMENSIONS` + `MIGRATED`  (upstream 1536 → **fork flips to 768 via migration**)
-
-The `DIMENSIONS` key in `config.toml` only affects LanceDB. For pgvector (the default) the column width is hardcoded to `Vector(1536)` in upstream's initial schema and migrations — matching OpenAI's `text-embedding-3-small`. If your embedding model produces 768-dim vectors (as nomic-embed-text does), every insert would roll back with `expected 1536 dimensions, not 768`. The fork ships an `h8i9j0k1l2m3` migration that alters `documents.embedding` and `message_embeddings.embedding` to `Vector(768)` after upstream's schema lands; `[vector_store] MIGRATED = true` tells `src/config.py`'s relaxed validator to accept non-1536 dims once that migration has run. Both are already set in the reference TOML below.
-
-#### 4. `scripts/sleep_daemon.py` thresholds (`PENDING_THRESHOLD` / `TOKEN_THRESHOLD` / `IDLE_TIMEOUT_MINUTES`)
-
-The sleep daemon (see `experiments/memory-consolidation.md`) enforces memory consolidation by firing Honcho's dream agent under three conditions. These env-var thresholds decide when it naps:
-
-- `IDLE_TIMEOUT_MINUTES` (**10**): after this many minutes without a user message, take a nap. Matches Honcho's own `[dream] IDLE_TIMEOUT_MINUTES`, so both triggers stay in sync.
-- `PENDING_THRESHOLD` (**10**): pending representation queue rows that force a nap even if the user is still active. Too high → contradictions pile up between naps and recall gets polluted with stale observations. Too low → user gets nap-interrupted mid-session often.
-- `TOKEN_THRESHOLD` (**1000**): pending token sum across representation rows. Same tradeoff as pending count; tokens are a better signal when one long message is worth more than many short ones.
-
-Env overrides:
-
-```bash
-PENDING_THRESHOLD=5 TOKEN_THRESHOLD=500 IDLE_TIMEOUT_MINUTES=5 \
-  python3 ~/nuncstans-hermes-stack/scripts/sleep_daemon.py
-```
-
-#### Other values worth watching (less critical)
-
-- `[deriver.model_config] max_output_tokens` (scaffold 4096 → **1500**): tool loops accumulate output; `1500` keeps the cumulative loop well inside even a modest context window. Post-refactor this lives inside the nested `[X.model_config]` block, not on the flat `[deriver]` table.
-- `[deriver] MAX_INPUT_TOKENS` (scaffold 23000 → **8000**): flat top-level knob, still applies. 8k leaves plenty of room on the 65k per-slot context (chat server runs `-c 131072 --parallel 2`).
-- `[dream] MAX_TOOL_ITERATIONS` (scaffold 20 → **3**): on the current GPU build each iteration completes quickly, so the scaffold default 20 is fine for deeper consolidation. `3` keeps it fastest.
-- `[dream] MIN_HOURS_BETWEEN_DREAMS` (scaffold 8 → **1**): Honcho validates this as an integer, so fractional hours (0.5) are rejected. `1` hour is the shortest legal value.
-- Fallback model (**leave unset**): the new `ConfiguredModelSettings` schema supports a nested `fallback = { transport, model, overrides }` on each `[X.model_config]` block. In this local-only setup there's no second provider — don't add one, or retries after a transient llama-server error will silently bounce to an unrelated endpoint. (The old flat `BACKUP_PROVIDER` / `BACKUP_MODEL` keys have been removed from the schema entirely; if you ported them over from an older `config.toml`, the new code silently ignores them.)
+- [`docs/specs/scripts/gatekeeper_daemon.md`](docs/specs/scripts/gatekeeper_daemon.md) — deriver path + queue classification
+- [`docs/specs/scripts/sleep_daemon.md`](docs/specs/scripts/sleep_daemon.md) — nap thresholds and dream model selection
+- [`docs/specs/scripts/llama-services.md`](docs/specs/scripts/llama-services.md) — how `-c`/`--parallel` on llama-server bounds Honcho's context/MAX_INPUT caps
 
 ### Step 5. `honcho/config.toml` reference
 
-The live `config.toml` is upstream-`.gitignore`d; the `cp` in Step 4 materialized it from `honcho/config.toml.hermes-example`. Every Honcho LLM consumer points at `:8080` (chat server, `qwen3.6-test` alias); embeddings point at `:8081` (`openai/text-embedding-3-small` alias):
+The live `config.toml` is upstream-`.gitignore`d; Step 4 materialized it from `honcho/config.toml.hermes-example` — that file in the repo is the **canonical reference** for every block (9 chat `model_config` blocks + 1 embedding block + `[vector_store]` / `[deriver]` / `[dream]` knobs).
 
-```toml
-[app]
-LOG_LEVEL = "INFO"
-SESSION_OBSERVERS_LIMIT = 10
-GET_CONTEXT_MAX_TOKENS = 100000
-MAX_FILE_SIZE = 5242880
-MAX_MESSAGE_SIZE = 25000
-EMBED_MESSAGES = true
-NAMESPACE = "honcho"
-
-[db]
-CONNECTION_URI = "postgresql+psycopg://honcho:honcho@database:5432/honcho"
-
-[auth]
-USE_AUTH = false
-
-[cache]
-ENABLED = true
-URL = "redis://redis:6379/0?suppress=true"
-
-# llama-server's OpenAI-compat path refuses empty api_key; any non-empty placeholder works.
-[llm]
-DEFAULT_MAX_TOKENS = 2500
-OPENAI_API_KEY = "not-needed"
-
-[embedding]
-VECTOR_DIMENSIONS = 768
-MAX_INPUT_TOKENS  = 2048          # nomic-embed-text's native context
-
-[embedding.model_config]
-transport = "openai"
-model     = "openai/text-embedding-3-small"     # the alias the embed server advertises
-
-[embedding.model_config.overrides]
-base_url = "http://host.docker.internal:8081/v1"
-
-[deriver]
-ENABLED = true
-MAX_INPUT_TOKENS                = 8000
-REPRESENTATION_BATCH_MAX_TOKENS = 200
-FLUSH_ENABLED                   = true
-
-[deriver.model_config]
-transport         = "openai"
-model             = "qwen3.6-test"              # the alias the chat server advertises
-max_output_tokens = 1500
-
-[deriver.model_config.overrides]
-base_url = "http://host.docker.internal:8080/v1"
-
-# Repeat the same model_config (transport="openai", model="qwen3.6-test",
-# overrides.base_url=":8080/v1") for:
-#   [dialectic.levels.{minimal,low,medium,high,max}.model_config]
-#   [summary.model_config]
-#   [dream.deduction_model_config]
-#   [dream.induction_model_config]
-
-[peer_card]
-ENABLED = true
-
-[vector_store]
-TYPE       = "pgvector"
-DIMENSIONS = 768
-MIGRATED   = true
-
-[metrics]
-ENABLED = false
-
-[telemetry]
-ENABLED = false
-
-[sentry]
-ENABLED = false
-```
-
-An `.env` file at `honcho/.env` is optional — the committed TOML above sets `OPENAI_API_KEY` explicitly. If you want to override endpoints without editing TOML, `pydantic-settings` reads nested fields via a `__` delimiter:
-
-```dotenv
-EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://host.docker.internal:8081/v1
-DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=http://host.docker.internal:8080/v1
-```
+Per-block editing notes and the automated rewrite path (via `./scripts/switch-endpoints.py`) live in [`docs/specs/scripts/switch-endpoints.md`](docs/specs/scripts/switch-endpoints.md). For runtime overrides without touching TOML, `pydantic-settings` reads nested fields via a `__` delimiter — e.g. `DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=...` in `honcho/.env`.
 
 ### Step 6. Bring up Honcho
 
@@ -604,9 +467,9 @@ Easiest lasting fix: add `COMPOSE_PROJECT_NAME=honcho-gatekeeper` to `honcho/.en
 ./scripts/llama-services.sh stop
 ./scripts/llama-services.sh restart
 ./scripts/llama-services.sh status
-./scripts/llama-services.sh logs chat       # tail ~/.local/state/hermes-stack/chat-server.log
-./scripts/llama-services.sh logs embed      # tail ~/.local/state/hermes-stack/embed-server.log
-./scripts/llama-services.sh logs gk         # tail ~/.local/state/hermes-stack/gatekeeper.log
+./scripts/llama-services.sh logs chat       # tail ~/.local/state/nuncstans-hermes-stack/chat-server.log
+./scripts/llama-services.sh logs embed      # tail ~/.local/state/nuncstans-hermes-stack/embed-server.log
+./scripts/llama-services.sh logs gk         # tail ~/.local/state/nuncstans-hermes-stack/gatekeeper.log
 
 # Honcho (data survives in the named volumes)
 cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose down
@@ -615,75 +478,20 @@ cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose up -d
 
 ## Switching endpoints / models
 
-`scripts/switch-endpoints.py` is a conversational CLI that swaps Honcho's and Hermes's LLM backends
-(and the local `llama-server` model, when desired) under a snapshot + auto-rollback envelope. It
-runs via `uv run --script` — deps (`tomlkit`, `ruamel.yaml`, `httpx`, `questionary`) are declared in
-the script header and installed on first invocation.
+`scripts/switch-endpoints.py` is a conversational CLI that swaps Honcho's and Hermes's LLM backends (and the local `llama-server` model on request) under a snapshot + auto-rollback envelope. Runs via `uv run --script` — deps are declared in the script header.
 
 ```bash
-# Preview-only: walk the picker, print the TOML / .conf diffs, no writes, no restarts.
-./scripts/switch-endpoints.py --dry-run
-
-# Real run: pick endpoints + models interactively, confirm the diff, write, and (optionally) restart
-# the affected services when prompted.
-./scripts/switch-endpoints.py
-
-# Include the embedding axis too (opt-in; see note below).
-./scripts/switch-endpoints.py --with-embed
-
-# Snapshot management (up to 10 most-recent are kept automatically).
+./scripts/switch-endpoints.py --dry-run           # preview diffs, no writes
+./scripts/switch-endpoints.py                     # real run, 3 axes by default
+./scripts/switch-endpoints.py --with-embed        # also prompt for the embed axis (opt-in)
 ./scripts/switch-endpoints.py --list-snapshots
-./scripts/switch-endpoints.py --rollback              # restore from the most recent snapshot
-./scripts/switch-endpoints.py --restore <id>          # restore from a specific one (id from --list-snapshots)
+./scripts/switch-endpoints.py --rollback
+./scripts/switch-endpoints.py --restore <id>
 ```
 
-The default interactive flow asks three things, in order:
+For the interactive flow, parameter derivation rules (`-c` / `-ngl` / MoE / reasoning / `--parallel`), snapshot layout + manifest schema, Honcho cap co-movement, and the ollama pitfalls the switcher warns about (`OLLAMA_CONTEXT_LENGTH` silent truncation, qwen3 `think` flag, tool-call stability), see [`docs/specs/scripts/switch-endpoints.md`](docs/specs/scripts/switch-endpoints.md).
 
-1. **Honcho chat endpoint + model** — applies to all 9 chat blocks (`deriver`, the five `dialectic.levels.*`,
-   `summary`, `dream.deduction_model_config`, `dream.induction_model_config`).
-2. **Hermes chat endpoint + model** — "same as Honcho / different URL / leave alone". When confirmed,
-   also offered to add the model to `providers.<name>.models` so it appears in `hermes model`'s picker.
-3. **llama-server model (optional)** — if the Honcho chat endpoint resolves to the local `llama-server`
-   and you want a different model loaded, the switcher probes the target (via `/v1/models` meta or
-   `ollama /api/show`), proposes `-c` / `-ngl` / `-ot` / `--reasoning` / `--parallel` based on the model's
-   context window and MoE/dense arch, and writes `scripts/llama-services.conf`.
-
-The embedding axis is **opt-in via `--with-embed`** and deliberately skipped in the default flow:
-changing the embedding dim requires a destructive pgvector migration, so in practice you rarely
-want to touch it. When you *do* pass `--with-embed`, the picker routes to the `:8081` embed server
-(not `:8080` chat) and filters the model list by embed-looking names (`embed`, `bge-`, `e5-`,
-`gte-`, `bert`). If the chosen model's vector dim differs from the running pgvector column, the
-switcher aborts that axis with a warning rather than risk breaking the store — leaving the chat /
-Hermes / llama-server axes unaffected.
-
-Before any write the script takes a coherent snapshot of the three affected files under
-`~/.local/state/hermes-stack/endpoint-snapshots/<timestamp>.<pid>/` with a `manifest.json`. If any
-write or the subsequent service restart fails, it auto-rolls-back all three files atomically. If the
-restart succeeds, the manifest is flipped to `status="applied"` and the snapshot remains in the LRU
-for later inspection or manual `--restore`.
-
-The two restart targets the switcher may trigger (after confirming):
-
-```bash
-# When honcho/config.toml changed:
-docker compose -f honcho/docker-compose.yml up -d --force-recreate api deriver
-
-# When scripts/llama-services.conf changed:
-./scripts/llama-services.sh restart
-```
-
-Ollama caveats the switcher warns about when you point Hermes or Honcho at `:11434`:
-
-- **Context ceiling** — Ollama's OpenAI-compat `/v1/chat/completions` has no per-request `num_ctx`.
-  The service-wide `OLLAMA_CONTEXT_LENGTH` env (in the systemd drop-in) caps every request; prompts
-  above it are silently truncated. The switcher reads the current ceiling and caps Honcho's
-  `GET_CONTEXT_MAX_TOKENS` / `MAX_INPUT_TOKENS` accordingly.
-- **Qwen3 `think` flag** — `/v1/chat/completions` has no `think` field, so Hermes and Honcho can't
-  suppress qwen3's invisible reasoning tokens from the wire. Use an Ollama Modelfile with
-  `PARAMETER think false` to bake the flag in; the switcher surfaces the command when you pick a
-  `qwen3*` model from Ollama.
-- **Tool calling stability** — the OpenAI-compat tool-call path through Ollama is model-dependent;
-  `llama-server --jinja` is the more reliable route for Hermes's skill tools.
+Snapshots and logs live under `~/.local/state/nuncstans-hermes-stack/` by default; override with `HERMES_STATE_DIR` when running a second instance on the same host. Single-instance per host is the assumed operating mode — see the spec doc for the containerization outlook.
 
 ## Smoke test
 
@@ -698,7 +506,7 @@ Use three terminals (tmux panes or iTerm splits both work):
   bash ~/nuncstans-hermes-stack/test/uat/scripts/watch_memory.sh
   ```
   The script color-tags three streams:
-  - `[llama ]` prompt-processing and generation lines from the chat `llama-server` (`~/.local/state/hermes-stack/chat-server.log`)
+  - `[llama ]` prompt-processing and generation lines from the chat `llama-server` (`~/.local/state/nuncstans-hermes-stack/chat-server.log`)
   - `[deriver]` Honcho deriver container logs (observation extraction + save moments)
   - `[docs  ]`  prints one line each time the `documents` row count changes
 
