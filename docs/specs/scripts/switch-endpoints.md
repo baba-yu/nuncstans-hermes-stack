@@ -310,18 +310,24 @@ recommendation from the other side.
   in sync with the chat endpoint. This is an intentional trade: the
   default is safe (no silent classifier breakage on engine switch) at
   the cost of a small amount of churn for the minority workflow.
-- Once the embed engine-match offer brings Honcho embed to ollama (or
-  the user passes `--with-embed` and picks ollama manually), the local
-  llama-server chat on `:8080` has no caller left — gk has already
-  been re-pointed at ollama by Axis A, and neither Hermes nor Honcho
-  talk to `:8080`. Reclaim that VRAM with:
-  ```bash
-  ./scripts/llama-services.sh stop chat    # kills only :8080
-  ```
-  Embed and gk keep running. If you also moved embed to ollama, a
-  further `stop embed` frees the `:8081` VRAM. Per-target `start` /
-  `stop` / `restart` subcommands were added to `llama-services.sh` for
-  exactly this flow.
+- The llama-services lifecycle is now per-service and scoped by the
+  axis changes (`_llama_lifecycle_plan` in the switcher):
+  - **chat llama-server** — restarted only when `llama_chat_params`
+    actually changed; started (idempotent) when Axis A moves chat
+    back onto llama-server; **stopped** when Axis A moves chat to
+    ollama (no caller left → VRAM reclaimed automatically).
+  - **embed llama-server** — same three cases keyed off Axis B /
+    `llama_embed_params`.
+  - **gk daemon** — restarted whenever `honcho_chat` changed
+    (`GK_LLM_URL` / `GK_LLM_MODEL` need to be re-read from the conf).
+  So a run that points chat (and optionally embed) at ollama will stop
+  the corresponding llama-server processes without any manual follow-up.
+  The user still sees one confirmation describing the full plan —
+  "stop {chat}; restart {gk}" — before anything executes.
+- If you preferred the old "always stop + start all three" behavior,
+  or you want to manually intervene, the per-target subcommands on
+  `llama-services.sh` (`start|stop|restart {all|chat|embed|gk}`) are
+  the lower-level primitive the switcher drives.
 
 Future work on the script itself is deliberately small:
 

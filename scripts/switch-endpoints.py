@@ -952,11 +952,68 @@ def restart_honcho_compose(*, dry_run: bool) -> subprocess.CompletedProcess[str]
 
 
 def restart_llama(*, dry_run: bool) -> subprocess.CompletedProcess[str] | None:
+    """Restart all llama-services (chat+embed+gk). Kept for backwards-compat
+    callers; cmd_switch now prefers the per-target helper below."""
     cmd = [str(LLAMA_RESTART_SH), "restart"]
     cprint("step", f"restart llama-services: {' '.join(cmd)}")
     if dry_run:
         return None
     return subprocess.run(cmd, check=False, capture_output=True, text=True)
+
+
+def llama_services_sub(
+    subcmd: str, target: str, *, dry_run: bool
+) -> subprocess.CompletedProcess[str] | None:
+    """Run `./scripts/llama-services.sh <subcmd> <target>` for one of
+    start / stop / restart against one of all / chat / embed / gk."""
+    cmd = [str(LLAMA_RESTART_SH), subcmd, target]
+    cprint("step", " ".join(cmd))
+    if dry_run:
+        return None
+    return subprocess.run(cmd, check=False, capture_output=True, text=True)
+
+
+def _llama_lifecycle_plan(plan: PlannedChanges) -> tuple[list[str], list[str], list[str]]:
+    """Decide per-service actions based on the planned axis changes.
+
+    Returns (start_targets, restart_targets, stop_targets). Rules:
+    - chat llama-server (:8080):
+        - llama_chat_params set          → restart chat (new model/flags to load)
+        - else honcho_chat → llama-server → start chat (idempotent, ensures up)
+        - else honcho_chat → ollama/other → stop chat (no caller left)
+    - embed llama-server (:8081):
+        - llama_embed_params set         → restart embed
+        - else honcho_embed → llama-server → start embed (idempotent)
+        - else honcho_embed → ollama/other → stop embed
+    - gk daemon:
+        - honcho_chat set                → restart gk (GK_LLM_URL/MODEL changed)
+    """
+    start: list[str] = []
+    restart: list[str] = []
+    stop: list[str] = []
+
+    if plan.llama_chat_params is not None:
+        restart.append("chat")
+    elif plan.honcho_chat is not None:
+        engine = _engine_of_url(plan.honcho_chat.base_url_host)
+        if engine == "llama-server":
+            start.append("chat")
+        else:
+            stop.append("chat")
+
+    if plan.llama_embed_params is not None:
+        restart.append("embed")
+    elif plan.honcho_embed is not None:
+        engine = _engine_of_url(plan.honcho_embed.base_url_host)
+        if engine == "llama-server":
+            start.append("embed")
+        else:
+            stop.append("embed")
+
+    if plan.honcho_chat is not None:
+        restart.append("gk")
+
+    return start, restart, stop
 
 
 # ---------------------------------------------------------------------------
@@ -1507,22 +1564,59 @@ def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
                 "updated hermes config via `hermes config set` + full provider sync",
             )
 
-        # 2. restarts
-        if plan.needs_llama_restart():
-            do_restart = questionary.confirm(
-                "restart llama-services now?", default=True
+        # 2. restarts — per-service scope so we don't needlessly relaunch
+        # a llama-server that the new config no longer calls (e.g. chat
+        # moved to ollama leaves :8080 with no caller). Unused services
+        # get a 'stop' action instead of a 'restart'; still-needed ones
+        # get 'start' (idempotent) when params did not change, or
+        # 'restart' when they did.
+        start_targets, restart_targets, stop_targets = _llama_lifecycle_plan(plan)
+        if start_targets or restart_targets or stop_targets:
+            scope_msg_parts: list[str] = []
+            if stop_targets:
+                scope_msg_parts.append(f"stop {{{','.join(stop_targets)}}} (no longer in use)")
+            if restart_targets:
+                scope_msg_parts.append(f"restart {{{','.join(restart_targets)}}}")
+            if start_targets:
+                scope_msg_parts.append(f"start {{{','.join(start_targets)}}} (idempotent)")
+            do_lifecycle = questionary.confirm(
+                "apply llama-services lifecycle: " + "; ".join(scope_msg_parts) + "?",
+                default=True,
             ).ask()
-            if do_restart:
-                r = restart_llama(dry_run=False)
-                if r is not None and r.returncode != 0:
-                    err_text = (r.stderr or r.stdout).strip()
-                    cprint("err", f"llama-services rc={r.returncode}:")
-                    for line in err_text.splitlines()[-20:]:
-                        sys.stderr.write(f"    {line}\n")
-                    errors.append(
-                        f"llama-services restart rc={r.returncode}: {err_text[:500]}"
-                    )
-                    raise FatalError("llama-services restart failed")
+            if do_lifecycle:
+                # Stops first (frees VRAM before any 'start' / 'restart' tries to
+                # bind the same GPU arena).
+                for t in stop_targets:
+                    r = llama_services_sub("stop", t, dry_run=False)
+                    if r is not None and r.returncode != 0:
+                        err_text = (r.stderr or r.stdout).strip()
+                        cprint("warn", f"stop {t} rc={r.returncode}: {err_text[:200]}")
+                        # non-fatal: if stop fails we still proceed, but record it
+                        errors.append(
+                            f"llama-services stop {t} rc={r.returncode}: {err_text[:300]}"
+                        )
+                for t in restart_targets:
+                    r = llama_services_sub("restart", t, dry_run=False)
+                    if r is not None and r.returncode != 0:
+                        err_text = (r.stderr or r.stdout).strip()
+                        cprint("err", f"restart {t} rc={r.returncode}:")
+                        for line in err_text.splitlines()[-20:]:
+                            sys.stderr.write(f"    {line}\n")
+                        errors.append(
+                            f"llama-services restart {t} rc={r.returncode}: {err_text[:500]}"
+                        )
+                        raise FatalError(f"llama-services restart {t} failed")
+                for t in start_targets:
+                    r = llama_services_sub("start", t, dry_run=False)
+                    if r is not None and r.returncode != 0:
+                        err_text = (r.stderr or r.stdout).strip()
+                        cprint("err", f"start {t} rc={r.returncode}:")
+                        for line in err_text.splitlines()[-20:]:
+                            sys.stderr.write(f"    {line}\n")
+                        errors.append(
+                            f"llama-services start {t} rc={r.returncode}: {err_text[:500]}"
+                        )
+                        raise FatalError(f"llama-services start {t} failed")
         if plan.needs_honcho_restart():
             do_restart = questionary.confirm(
                 "restart Honcho compose (api + deriver) now?", default=True
