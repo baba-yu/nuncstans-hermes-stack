@@ -320,10 +320,31 @@ recommendation from the other side.
     `llama_embed_params`.
   - **gk daemon** — restarted whenever `honcho_chat` changed
     (`GK_LLM_URL` / `GK_LLM_MODEL` need to be re-read from the conf).
-  So a run that points chat (and optionally embed) at ollama will stop
-  the corresponding llama-server processes without any manual follow-up.
-  The user still sees one confirmation describing the full plan —
-  "stop {chat}; restart {gk}" — before anything executes.
+  - **ollama model unload** — opt-in for the reverse direction. The
+    switcher knows which ollama models were in use before the switch
+    (across chat / embed / hermes axes) and are not in use after, and
+    will interactively ask whether to POST `/api/generate keep_alive=0`
+    for each of them. **Default is No** — keeping the user's
+    `OLLAMA_KEEP_ALIVE=-1` policy intact, preserving prompt/KV caches,
+    and avoiding the ~10-30s reload cost for a 30B-class model on a
+    quick switch-back. When VRAM reclaim genuinely matters (tight GPU
+    or long-term engine change), answer Yes at the prompt, or pass
+    `--unload-ollama` on the command line to skip the confirm. The
+    ollama systemd service is never touched either way — stopping the
+    whole service requires sudo and is out of scope. Manual unload
+    (for ad-hoc reclaim outside a switch) is one line:
+    ```bash
+    curl -sfS -X POST http://localhost:11434/api/generate \
+      -d '{"model":"<id>","keep_alive":0,"prompt":"","stream":false}'
+    # or: ollama stop <id>
+    ```
+  So a run that points chat (and optionally embed) at ollama stops
+  the corresponding llama-server processes without manual follow-up,
+  and a run that moves chat off ollama releases the ollama model's
+  VRAM without manual follow-up. The user still sees one confirmation
+  describing the full plan — e.g.
+  "stop {chat}; ollama unload {qwen3.6:27b}; restart {gk}" — before
+  anything executes.
 - If you preferred the old "always stop + start all three" behavior,
   or you want to manually intervene, the per-target subcommands on
   `llama-services.sh` (`start|stop|restart {all|chat|embed|gk}`) are

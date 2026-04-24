@@ -483,6 +483,7 @@ cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose up -d
 ./scripts/switch-endpoints.py --dry-run           # preview diffs, no writes
 ./scripts/switch-endpoints.py                     # real run, 3 axes by default
 ./scripts/switch-endpoints.py --with-embed        # full picker on the embed axis (endpoint + model both)
+./scripts/switch-endpoints.py --unload-ollama     # force-unload stale ollama models (skip the interactive prompt)
 ./scripts/switch-endpoints.py --list-snapshots
 ./scripts/switch-endpoints.py --rollback
 ./scripts/switch-endpoints.py --restore <id>

@@ -775,6 +775,79 @@ def _embed_endpoint_for_engine(engine: str) -> tuple[str, str] | None:
     return None
 
 
+def _ollama_models_in_use(
+    chat_url: str, chat_model: str,
+    embed_url: str, embed_model: str,
+    hermes_url: str, hermes_model: str,
+) -> set[str]:
+    """Set of ollama-resident model ids currently in use across the three
+    consumer axes (Honcho chat, Honcho embed, Hermes). Axes pointed at
+    non-ollama engines contribute nothing."""
+    used: set[str] = set()
+    if _engine_of_url(chat_url) == "ollama":
+        used.add(chat_model)
+    if _engine_of_url(embed_url) == "ollama":
+        used.add(embed_model)
+    if _engine_of_url(hermes_url) == "ollama":
+        used.add(hermes_model)
+    return used
+
+
+def _ollama_unload_targets(
+    plan: PlannedChanges,
+    cur_chat: tuple[str, str],
+    cur_embed: tuple[str, str],
+    cur_hermes: tuple[str, str],
+) -> list[str]:
+    """Which ollama models were in use before the switch but will not be
+    after it? Those are candidates for POST /api/generate keep_alive=0
+    so ollama releases their VRAM without us needing to stop the systemd
+    service (which would require sudo and affect unrelated clients)."""
+    before = _ollama_models_in_use(*cur_chat, *cur_embed, *cur_hermes)
+
+    def resolve(
+        ep: EndpointChoice | None, fallback: tuple[str, str]
+    ) -> tuple[str, str]:
+        return (ep.base_url_host, ep.model) if ep is not None else fallback
+
+    new_chat = resolve(plan.honcho_chat, cur_chat)
+    new_embed = resolve(plan.honcho_embed, cur_embed)
+    new_hermes = resolve(plan.hermes, cur_hermes)
+    after = _ollama_models_in_use(*new_chat, *new_embed, *new_hermes)
+    return sorted(before - after)
+
+
+def ollama_unload_model(
+    model_id: str, *, base_host: str = "http://localhost:11434", dry_run: bool
+) -> bool:
+    """POST /api/generate with keep_alive=0 — ollama unloads the model
+    from VRAM and returns {done_reason:"unload"}. Returns True on success
+    (non-fatal: caller may log and continue if False)."""
+    url = f"{base_host.rstrip('/')}/api/generate"
+    cprint("step", f"ollama unload {model_id} via {url}")
+    if dry_run:
+        return True
+    try:
+        r = httpx.post(
+            url,
+            json={"model": model_id, "keep_alive": 0, "prompt": "", "stream": False},
+            timeout=15.0,
+        )
+        r.raise_for_status()
+        done_reason = r.json().get("done_reason", "")
+        if done_reason == "unload":
+            cprint("ok", f"ollama: {model_id} unloaded")
+            return True
+        cprint(
+            "warn",
+            f"ollama unload {model_id}: unexpected done_reason={done_reason!r}",
+        )
+        return False
+    except Exception as e:  # noqa: BLE001
+        cprint("warn", f"ollama unload {model_id} failed: {e}")
+        return False
+
+
 def _format_conf_value(key: str, value: str) -> str:
     # Quote string-ish values; leave ints unquoted.
     if re.fullmatch(r"-?\d+", value):
@@ -1448,7 +1521,9 @@ def _user_choice_summary(plan: PlannedChanges) -> dict[str, Any]:
     }
 
 
-def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
+def cmd_switch(
+    *, dry_run: bool, with_embed: bool = False, unload_ollama: bool = False
+) -> None:
     _print_current_state()
 
     doc = read_honcho_toml()
@@ -1569,12 +1644,55 @@ def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
         # moved to ollama leaves :8080 with no caller). Unused services
         # get a 'stop' action instead of a 'restart'; still-needed ones
         # get 'start' (idempotent) when params did not change, or
-        # 'restart' when they did.
+        # 'restart' when they did. Also unload any ollama model that
+        # was in use before the switch but is not any more, so VRAM is
+        # released without having to stop the systemd ollama service.
         start_targets, restart_targets, stop_targets = _llama_lifecycle_plan(plan)
-        if start_targets or restart_targets or stop_targets:
+
+        # Ollama unload is opt-in (default off) — overriding the user's
+        # OLLAMA_KEEP_ALIVE policy without asking was too aggressive:
+        # unloading drops prompt/KV caches, a 30B-class model reload
+        # from disk costs ~10-30s, and shared-ollama setups would lose
+        # state for other clients. Ask explicitly unless --unload-ollama
+        # was passed.
+        unload_candidates = _ollama_unload_targets(
+            plan, (c_url, c_model), (e_url, e_model), (h_url, h_model)
+        )
+        if not unload_candidates:
+            unload_models: list[str] = []
+        elif unload_ollama:
+            unload_models = unload_candidates
+            cprint(
+                "info",
+                f"--unload-ollama: will unload {', '.join(unload_candidates)}",
+            )
+        else:
+            resp = questionary.confirm(
+                f"refresh VRAM by unloading {len(unload_candidates)} ollama model(s) "
+                f"({', '.join(unload_candidates)})? "
+                f"Note: drops prompt/KV caches; 30B-class reload from disk costs "
+                f"~10-30s; overrides your OLLAMA_KEEP_ALIVE setting. "
+                f"Leave as N to keep models warm; manual unload is "
+                f"`curl -X POST http://localhost:11434/api/generate "
+                f"-d '{{\"model\":\"<id>\",\"keep_alive\":0,\"prompt\":\"\",\"stream\":false}}'`.",
+                default=False,
+            ).ask()
+            if resp is None:
+                raise KeyboardInterrupt
+            unload_models = unload_candidates if resp else []
+            if not resp:
+                cprint(
+                    "info",
+                    f"keeping ollama models warm: {', '.join(unload_candidates)}",
+                )
+        if start_targets or restart_targets or stop_targets or unload_models:
             scope_msg_parts: list[str] = []
             if stop_targets:
                 scope_msg_parts.append(f"stop {{{','.join(stop_targets)}}} (no longer in use)")
+            if unload_models:
+                scope_msg_parts.append(
+                    f"ollama unload {{{','.join(unload_models)}}} (VRAM reclaim)"
+                )
             if restart_targets:
                 scope_msg_parts.append(f"restart {{{','.join(restart_targets)}}}")
             if start_targets:
@@ -1584,8 +1702,8 @@ def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
                 default=True,
             ).ask()
             if do_lifecycle:
-                # Stops first (frees VRAM before any 'start' / 'restart' tries to
-                # bind the same GPU arena).
+                # Stops + unloads first so VRAM is released before any
+                # 'start' / 'restart' tries to bind the same GPU arena.
                 for t in stop_targets:
                     r = llama_services_sub("stop", t, dry_run=False)
                     if r is not None and r.returncode != 0:
@@ -1595,6 +1713,10 @@ def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
                         errors.append(
                             f"llama-services stop {t} rc={r.returncode}: {err_text[:300]}"
                         )
+                for model_id in unload_models:
+                    ok = ollama_unload_model(model_id, dry_run=False)
+                    if not ok:
+                        errors.append(f"ollama unload {model_id}: non-OK (see warn above)")
                 for t in restart_targets:
                     r = llama_services_sub("restart", t, dry_run=False)
                     if r is not None and r.returncode != 0:
@@ -1720,6 +1842,11 @@ def main() -> None:
                     help="also prompt for the Honcho embedding axis (default: skipped — "
                          "changing embed dim requires a destructive pgvector migration, "
                          "so it is opt-in)")
+    ap.add_argument("--unload-ollama", action="store_true",
+                    help="force-unload ollama models whose axes moved off ollama "
+                         "(skips the interactive prompt). Default is to ask "
+                         "(default No) so your OLLAMA_KEEP_ALIVE setting and any "
+                         "warm prompt/KV caches are preserved.")
     ap.add_argument("--rollback", action="store_true",
                     help="restore from the most recent snapshot")
     ap.add_argument("--restore", metavar="SNAPSHOT_ID",
@@ -1744,7 +1871,11 @@ def main() -> None:
         elif args.restore:
             cmd_restore(args.restore)
         else:
-            cmd_switch(dry_run=args.dry_run, with_embed=args.with_embed)
+            cmd_switch(
+                dry_run=args.dry_run,
+                with_embed=args.with_embed,
+                unload_ollama=args.unload_ollama,
+            )
     except FatalError as e:
         cprint("err", str(e))
         sys.exit(2)
