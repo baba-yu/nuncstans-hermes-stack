@@ -36,6 +36,8 @@ Environment overrides:
   PENDING_THRESHOLD      default 10
   TOKEN_THRESHOLD        default 1000
   MIN_MINUTES_BETWEEN_NAPS  default 30
+  OLLAMA_URL             default http://localhost:11434 (used for the
+                         "detect currently loaded model" fallback only)
 """
 from __future__ import annotations
 

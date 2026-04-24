@@ -22,10 +22,32 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LLAMA_BUILD="$ROOT/llama.cpp/build/bin"
-EMBED_BLOB="/usr/share/ollama/.ollama/models/blobs/sha256-970aa74c0a90ef7482477cf803618e776e173c007bf957f635f1015bfcfef0e6"
-HF_CHAT_SPEC="unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL"
+
+# Defaults. scripts/llama-services.conf overrides any of these when
+# present; missing keys fall back to these values. scripts/switch-endpoints.py
+# writes to the .conf file, never to this script.
+CHAT_HF_SPEC="unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL"
 CHAT_ALIAS="qwen3.6-test"
-LOG_DIR="$HOME/.local/state/hermes-stack"
+CHAT_CTX=131072
+CHAT_NGL=99
+CHAT_IS_MOE=1
+CHAT_REASONING_OFF=1
+CHAT_PARALLEL=2
+EMBED_BLOB="/usr/share/ollama/.ollama/models/blobs/sha256-970aa74c0a90ef7482477cf803618e776e173c007bf957f635f1015bfcfef0e6"
+EMBED_ALIAS="openai/text-embedding-3-small"
+EMBED_NGL=99
+
+LLAMA_SERVICES_CONF="$ROOT/scripts/llama-services.conf"
+if [[ -f "$LLAMA_SERVICES_CONF" ]]; then
+    # shellcheck source=/dev/null
+    source "$LLAMA_SERVICES_CONF"
+fi
+
+# State dir holds pid files, log files, and endpoint-snapshots. Override
+# with HERMES_STATE_DIR to run a second instance on the same host. The
+# default assumes single-instance-per-user (see docs/specs/scripts/
+# llama-services.md for the multi-instance / containerization guidance).
+LOG_DIR="${HERMES_STATE_DIR:-$HOME/.local/state/nuncstans-hermes-stack}"
 mkdir -p "$LOG_DIR"
 
 CHAT_LOG="$LOG_DIR/chat-server.log"
@@ -76,8 +98,8 @@ start_embed() {
         -m "$EMBED_BLOB" \
         --host 0.0.0.0 --port 8081 \
         --embeddings \
-        --alias openai/text-embedding-3-small \
-        -ngl 99 \
+        --alias "$EMBED_ALIAS" \
+        -ngl "$EMBED_NGL" \
         > "$EMBED_LOG" 2>&1 &
     echo $! > "$EMBED_PID_FILE"
     disown
@@ -118,19 +140,34 @@ start_chat() {
     if port_open 8080; then
         die "port 8080 is bound but no tracked pid — investigate before starting"
     fi
-    info "starting chat server on :8080 (L6 config: expert offload + nothink)"
+    info "starting chat server on :8080 (alias=$CHAT_ALIAS, ctx=$CHAT_CTX, moe=$CHAT_IS_MOE, reasoning_off=$CHAT_REASONING_OFF)"
     export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}"
+
+    # Build optional flags from the conf. -ot (MoE expert offload) and
+    # --reasoning off are model-specific, so we gate them rather than
+    # hardcoding. If CHAT_HF_SPEC starts with '/' assume it's a local
+    # path and use -m; otherwise it's an HF repo spec, use -hf.
+    local -a chat_extra=()
+    (( CHAT_IS_MOE )) && chat_extra+=(-ot "ffn_(up|down|gate)_exps=CPU")
+    (( CHAT_REASONING_OFF )) && chat_extra+=(--reasoning off)
+
+    local -a model_flag
+    if [[ "$CHAT_HF_SPEC" == /* ]]; then
+        model_flag=(-m "$CHAT_HF_SPEC")
+    else
+        model_flag=(-hf "$CHAT_HF_SPEC")
+    fi
+
     nohup "$LLAMA_BUILD/llama-server" \
-        -hf "$HF_CHAT_SPEC" \
+        "${model_flag[@]}" \
         --host 0.0.0.0 --port 8080 \
-        -c 131072 \
+        -c "$CHAT_CTX" \
         -fa on \
         -ctk q8_0 -ctv q8_0 \
         --jinja \
-        -ngl 99 \
-        -ot "ffn_(up|down|gate)_exps=CPU" \
-        --reasoning off \
-        --parallel 2 \
+        -ngl "$CHAT_NGL" \
+        "${chat_extra[@]}" \
+        --parallel "$CHAT_PARALLEL" \
         --alias "$CHAT_ALIAS" \
         > "$CHAT_LOG" 2>&1 &
     echo $! > "$CHAT_PID_FILE"

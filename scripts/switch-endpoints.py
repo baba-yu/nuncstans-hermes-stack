@@ -1,0 +1,1526 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "tomlkit>=0.13",
+#   "ruamel.yaml>=0.18",
+#   "httpx>=0.27",
+#   "questionary>=2.0",
+# ]
+# ///
+"""switch-endpoints.py — interactive LLM endpoint/model switcher for the
+hermes-stack. Rewrites honcho/config.toml, scripts/llama-services.conf, and
+~/.hermes/config.yaml in a coherent snapshot/rollback envelope.
+
+Subcommands:
+  (default)            interactive switch flow
+  --dry-run            compute + print diffs, no writes, no restarts
+  --rollback           restore from the most recent snapshot
+  --restore <id>       restore from a specific snapshot id
+  --list-snapshots     show the 10 most recent snapshots with summaries
+
+Safety: before the first write the script takes a coherent snapshot of all
+affected files under ~/.local/state/nuncstans-hermes-stack/endpoint-snapshots/
+(override via $HERMES_STATE_DIR). On any
+write- or restart- error it promotes auto-rollback (atomic os.replace of each
+file, status=rolled_back in manifest). LRU pruned to 10 entries at startup.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import copy
+import dataclasses
+import datetime as dt
+import difflib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import textwrap
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable
+from urllib.parse import urlparse, urlunparse
+
+import httpx
+import questionary
+import tomlkit
+from ruamel.yaml import YAML
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path("/home/baba-y/nuncstans-hermes-stack")
+HONCHO_TOML = Path(os.environ.get("HONCHO_TOML_OVERRIDE", REPO_ROOT / "honcho" / "config.toml"))
+LLAMA_CONF = Path(os.environ.get("LLAMA_CONF_OVERRIDE", REPO_ROOT / "scripts" / "llama-services.conf"))
+LLAMA_RESTART_SH = REPO_ROOT / "scripts" / "llama-services.sh"
+HONCHO_COMPOSE = REPO_ROOT / "honcho" / "docker-compose.yml"
+HERMES_YAML = Path(os.environ.get("HERMES_YAML_OVERRIDE", Path.home() / ".hermes" / "config.yaml"))
+
+_DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "nuncstans-hermes-stack"
+SNAPSHOT_ROOT = Path(
+    os.environ.get("HERMES_STATE_DIR") or _DEFAULT_STATE_DIR
+) / "endpoint-snapshots"
+SNAPSHOT_KEEP = 10
+
+# The 9 chat model_config blocks inside honcho/config.toml.
+CHAT_BLOCKS: tuple[tuple[str, ...], ...] = (
+    ("deriver", "model_config"),
+    ("dialectic", "levels", "minimal", "model_config"),
+    ("dialectic", "levels", "low", "model_config"),
+    ("dialectic", "levels", "medium", "model_config"),
+    ("dialectic", "levels", "high", "model_config"),
+    ("dialectic", "levels", "max", "model_config"),
+    ("summary", "model_config"),
+    ("dream", "deduction_model_config"),
+    ("dream", "induction_model_config"),
+)
+EMBED_BLOCK: tuple[str, ...] = ("embedding", "model_config")
+
+OLLAMA_PORT_HINT = 11434
+CTX_HEADROOM = 20_000  # reserve output+system tokens when capping GET_CONTEXT_MAX_TOKENS
+CHAT_CTX_HARD_CAP = 131_072
+
+USE_COLOR = sys.stdout.isatty()
+
+
+# ---------------------------------------------------------------------------
+# Errors + small helpers
+# ---------------------------------------------------------------------------
+
+
+class FatalError(RuntimeError):
+    """Unrecoverable error — main() catches and exits non-zero."""
+
+
+def _c(code: str, s: str) -> str:
+    return f"\x1b[{code}m{s}\x1b[0m" if USE_COLOR else s
+
+
+def cprint(level: str, msg: str) -> None:
+    prefix = {
+        "info": _c("36", "[info]"),
+        "warn": _c("33", "[warn]"),
+        "err": _c("31", "[err ]"),
+        "ok": _c("32", "[ ok ]"),
+        "step": _c("35", "==>"),
+    }.get(level, "[info]")
+    print(f"{prefix} {msg}")
+
+
+def render_diff(old: str, new: str, path: str) -> str:
+    lines = list(
+        difflib.unified_diff(
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+            n=3,
+        )
+    )
+    if not lines:
+        return ""
+    if not USE_COLOR:
+        return "".join(lines)
+    out: list[str] = []
+    for line in lines:
+        if line.startswith("+++") or line.startswith("---"):
+            out.append(_c("1", line))
+        elif line.startswith("@@"):
+            out.append(_c("36", line))
+        elif line.startswith("+"):
+            out.append(_c("32", line))
+        elif line.startswith("-"):
+            out.append(_c("31", line))
+        else:
+            out.append(line)
+    return "".join(out)
+
+
+def atomic_write(path: Path, content: str, *, dry_run: bool) -> None:
+    if dry_run:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except Exception:
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Value objects
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class ModelMeta:
+    n_ctx_train: int
+    n_embd: int
+    n_params: int | None
+    is_moe: bool | None
+    arch: str | None
+
+
+@dataclass(slots=True)
+class ChatParams:
+    hf_spec: str
+    alias: str
+    ctx: int
+    ngl: int
+    is_moe: bool
+    reasoning_off: bool
+    parallel: int
+
+
+@dataclass(slots=True)
+class EmbedParams:
+    alias: str
+    dim: int
+    max_input_tokens: int
+    n_ctx_train: int
+
+
+@dataclass(slots=True)
+class EndpointChoice:
+    base_url_host: str    # user-visible form (may be localhost)
+    base_url_docker: str  # rewritten for config.toml
+    model: str
+    meta: ModelMeta | None
+
+
+@dataclass(slots=True)
+class Snapshot:
+    dir: Path
+    manifest: dict[str, Any]
+
+    @property
+    def id(self) -> str:
+        return self.dir.name
+
+
+@dataclass(slots=True)
+class PlannedChanges:
+    honcho_chat: EndpointChoice | None = None
+    honcho_embed: EndpointChoice | None = None
+    hermes: EndpointChoice | None = None
+    llama_chat_params: ChatParams | None = None
+    llama_embed_params: EmbedParams | None = None
+    caps: dict[str, int] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+
+    def needs_honcho_restart(self) -> bool:
+        return bool(self.honcho_chat or self.honcho_embed or self.caps)
+
+    def needs_llama_restart(self) -> bool:
+        return bool(self.llama_chat_params or self.llama_embed_params)
+
+
+# ---------------------------------------------------------------------------
+# URL helpers
+# ---------------------------------------------------------------------------
+
+
+def to_docker_url(url: str) -> str:
+    """Rewrite localhost/127.0.0.1 to host.docker.internal. Keep everything else."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return url
+    host = parsed.hostname or ""
+    if host not in ("localhost", "127.0.0.1", "0.0.0.0"):
+        return url
+    port = parsed.port
+    new_netloc = "host.docker.internal" + (f":{port}" if port else "")
+    if parsed.username:
+        userinfo = parsed.username + (f":{parsed.password}" if parsed.password else "")
+        new_netloc = f"{userinfo}@{new_netloc}"
+    return urlunparse(parsed._replace(netloc=new_netloc))
+
+
+def looks_like_ollama(url: str) -> bool:
+    try:
+        return (urlparse(url).port or 0) == OLLAMA_PORT_HINT
+    except ValueError:
+        return False
+
+
+def normalize_base(url: str) -> str:
+    """Strip trailing slash; ensure we have a full URL (scheme://host[:port][/path])."""
+    if not url:
+        return url
+    url = url.strip().rstrip("/")
+    if "://" not in url:
+        url = "http://" + url
+    return url
+
+
+# ---------------------------------------------------------------------------
+# Probing — /v1/models and ollama /api/show
+# ---------------------------------------------------------------------------
+
+
+def probe_models(base_url: str, *, timeout: float = 5.0) -> list[dict[str, Any]] | None:
+    """GET {base}/models. Returns list of model objects or None on failure."""
+    url = normalize_base(base_url) + "/models"
+    try:
+        r = httpx.get(url, timeout=timeout)
+        r.raise_for_status()
+    except Exception as e:  # noqa: BLE001
+        cprint("warn", f"GET {url} failed: {e}")
+        return None
+    try:
+        data = r.json().get("data") or []
+        if not isinstance(data, list):
+            return None
+        return data
+    except Exception as e:  # noqa: BLE001
+        cprint("warn", f"parsing {url} response failed: {e}")
+        return None
+
+
+def probe_ollama_show(base_url: str, model: str, *, timeout: float = 10.0) -> dict[str, Any] | None:
+    """POST {host}:11434/api/show {"model": ...}. base_url is a /v1-style URL."""
+    try:
+        parsed = urlparse(normalize_base(base_url))
+    except ValueError:
+        return None
+    host = parsed.hostname or "localhost"
+    scheme = parsed.scheme or "http"
+    show_url = f"{scheme}://{host}:{OLLAMA_PORT_HINT}/api/show"
+    try:
+        r = httpx.post(show_url, json={"model": model}, timeout=timeout)
+        if r.status_code == 404:
+            return {"__404__": True}
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:  # noqa: BLE001
+        cprint("warn", f"POST {show_url} failed: {e}")
+        return None
+
+
+def probe_model_meta(base_url: str, model: str) -> ModelMeta | None:
+    """Unified metadata probe across llama-server and ollama."""
+    models = probe_models(base_url)
+    meta_blob: dict[str, Any] | None = None
+    if models:
+        for m in models:
+            if m.get("id") == model:
+                meta_blob = m.get("meta") if isinstance(m.get("meta"), dict) else None
+                break
+
+    if meta_blob:  # llama-server path
+        return ModelMeta(
+            n_ctx_train=int(meta_blob.get("n_ctx_train") or 0),
+            n_embd=int(meta_blob.get("n_embd") or 0),
+            n_params=int(meta_blob["n_params"]) if meta_blob.get("n_params") else None,
+            is_moe=None,
+            arch=None,
+        )
+
+    # ollama path (models endpoint returned entries but no meta, or /api/show is available)
+    if looks_like_ollama(base_url) or models is None:
+        show = probe_ollama_show(base_url, model)
+        if show and not show.get("__404__"):
+            mi = show.get("model_info") or {}
+            arch = mi.get("general.architecture") or show.get("details", {}).get("family")
+            ctx = 0
+            embd = 0
+            expert_count = 0
+            if arch:
+                ctx = int(mi.get(f"{arch}.context_length") or 0)
+                embd = int(mi.get(f"{arch}.embedding_length") or 0)
+                expert_count = int(mi.get(f"{arch}.expert_count") or 0)
+            details = show.get("details") or {}
+            param_size = details.get("parameter_size") or ""
+            n_params = _parse_param_size(param_size)
+            is_moe = (expert_count or 0) > 0 or (arch and "moe" in str(arch).lower())
+            return ModelMeta(
+                n_ctx_train=ctx,
+                n_embd=embd,
+                n_params=n_params,
+                is_moe=bool(is_moe),
+                arch=str(arch) if arch else None,
+            )
+        elif show and show.get("__404__"):
+            cprint(
+                "warn",
+                f"ollama does not know about '{model}'. Run: ollama pull {model}",
+            )
+            return None
+    return None
+
+
+def _parse_param_size(s: str) -> int | None:
+    """'35B' -> 35_000_000_000. Returns None on parse failure."""
+    if not s:
+        return None
+    m = re.match(r"\s*([\d.]+)\s*([BMK]?)", s, re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        val = float(m.group(1))
+    except ValueError:
+        return None
+    suffix = (m.group(2) or "").upper()
+    mult = {"B": 1_000_000_000, "M": 1_000_000, "K": 1_000, "": 1_000_000_000}[suffix]
+    return int(val * mult)
+
+
+# ---------------------------------------------------------------------------
+# Derivation of chat / embed params
+# ---------------------------------------------------------------------------
+
+
+def derive_chat_params(
+    meta: ModelMeta,
+    *,
+    current: ChatParams,
+    hf_spec: str,
+    alias: str,
+) -> ChatParams:
+    ctx = min(meta.n_ctx_train or current.ctx, CHAT_CTX_HARD_CAP) if meta.n_ctx_train else current.ctx
+    params = meta.n_params
+    # ngl default: 99 for <=15B, otherwise keep current / ask later.
+    if params is not None and params <= 15_000_000_000:
+        ngl = 99
+    else:
+        ngl = current.ngl  # caller will prompt if needed
+    is_moe = meta.is_moe if meta.is_moe is not None else current.is_moe
+    reasoning_off = bool(meta.arch and meta.arch.lower().startswith("qwen3"))
+    # parallel: default 2; suggest 1 for dense models >= 35B
+    parallel = 2
+    if params is not None and params >= 35_000_000_000 and not is_moe:
+        parallel = 1
+    return ChatParams(
+        hf_spec=hf_spec,
+        alias=alias,
+        ctx=ctx,
+        ngl=ngl,
+        is_moe=bool(is_moe),
+        reasoning_off=reasoning_off,
+        parallel=parallel,
+    )
+
+
+def derive_embed_params(meta: ModelMeta, *, alias: str) -> EmbedParams:
+    return EmbedParams(
+        alias=alias,
+        dim=meta.n_embd or 0,
+        max_input_tokens=meta.n_ctx_train or 0,
+        n_ctx_train=meta.n_ctx_train or 0,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Read-side helpers for current state
+# ---------------------------------------------------------------------------
+
+
+def read_honcho_toml() -> tomlkit.TOMLDocument:
+    return tomlkit.parse(HONCHO_TOML.read_text(encoding="utf-8"))
+
+
+def toml_get(doc: Any, path: tuple[str, ...]) -> Any:
+    cur = doc
+    for key in path:
+        if cur is None:
+            return None
+        cur = cur.get(key) if hasattr(cur, "get") else None
+    return cur
+
+
+def current_honcho_chat(doc: tomlkit.TOMLDocument) -> tuple[str, str]:
+    """Return (base_url, model) from the deriver block (representative)."""
+    mc = toml_get(doc, ("deriver", "model_config"))
+    if not mc:
+        return ("", "")
+    base = (toml_get(mc, ("overrides", "base_url")) or "")
+    return (str(base), str(mc.get("model") or ""))
+
+
+def current_honcho_embed(doc: tomlkit.TOMLDocument) -> tuple[str, str]:
+    mc = toml_get(doc, EMBED_BLOCK)
+    if not mc:
+        return ("", "")
+    base = (toml_get(mc, ("overrides", "base_url")) or "")
+    return (str(base), str(mc.get("model") or ""))
+
+
+def current_caps(doc: tomlkit.TOMLDocument) -> dict[str, int]:
+    return {
+        "app.GET_CONTEXT_MAX_TOKENS": int(toml_get(doc, ("app", "GET_CONTEXT_MAX_TOKENS")) or 0),
+        "dialectic.MAX_INPUT_TOKENS": int(toml_get(doc, ("dialectic", "MAX_INPUT_TOKENS")) or 0),
+        "embedding.VECTOR_DIMENSIONS": int(toml_get(doc, ("embedding", "VECTOR_DIMENSIONS")) or 0),
+        "vector_store.DIMENSIONS": int(toml_get(doc, ("vector_store", "DIMENSIONS")) or 0),
+        "embedding.MAX_INPUT_TOKENS": int(toml_get(doc, ("embedding", "MAX_INPUT_TOKENS")) or 0),
+    }
+
+
+def read_llama_conf() -> dict[str, str]:
+    """Parse KEY=VALUE lines (values possibly double-quoted). Preserves only keys."""
+    out: dict[str, str] = {}
+    if not LLAMA_CONF.exists():
+        return out
+    for raw in LLAMA_CONF.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line)
+        if not m:
+            continue
+        key, val = m.group(1), m.group(2).strip()
+        if len(val) >= 2 and val[0] == '"' and val[-1] == '"':
+            val = val[1:-1]
+        out[key] = val
+    return out
+
+
+def current_chat_params_from_conf() -> ChatParams:
+    c = read_llama_conf()
+    return ChatParams(
+        hf_spec=c.get("CHAT_HF_SPEC", ""),
+        alias=c.get("CHAT_ALIAS", "qwen3.6-test"),
+        ctx=int(c.get("CHAT_CTX") or CHAT_CTX_HARD_CAP),
+        ngl=int(c.get("CHAT_NGL") or 99),
+        is_moe=c.get("CHAT_IS_MOE", "0") == "1",
+        reasoning_off=c.get("CHAT_REASONING_OFF", "0") == "1",
+        parallel=int(c.get("CHAT_PARALLEL") or 2),
+    )
+
+
+def read_hermes_config() -> dict[str, Any] | None:
+    if not HERMES_YAML.exists():
+        return None
+    yaml = YAML(typ="rt")
+    with HERMES_YAML.open("r", encoding="utf-8") as f:
+        return yaml.load(f)
+
+
+def current_hermes_summary() -> tuple[str, str]:
+    data = read_hermes_config()
+    if not data:
+        return ("", "")
+    model = data.get("model") or {}
+    return (str(model.get("base_url", "")), str(model.get("default", "")))
+
+
+def ollama_context_ceiling() -> int | None:
+    try:
+        r = subprocess.run(
+            ["systemctl", "cat", "ollama.service"],
+            check=False, capture_output=True, text=True, timeout=5,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if r.returncode != 0:
+        return None
+    for line in r.stdout.splitlines():
+        m = re.search(r'OLLAMA_CONTEXT_LENGTH=(\d+)', line)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Snapshot / rollback
+# ---------------------------------------------------------------------------
+
+
+SNAPSHOT_FILES: tuple[tuple[str, Path], ...] = (
+    ("config.toml", HONCHO_TOML),
+    ("llama-services.conf", LLAMA_CONF),
+    ("hermes-config.yaml", HERMES_YAML),
+)
+
+
+def _snapshot_id() -> str:
+    ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"{ts}.{os.getpid()}"
+
+
+def prune_snapshots(keep: int = SNAPSHOT_KEEP) -> int:
+    """Remove oldest directories when count > keep. Returns delete count."""
+    if not SNAPSHOT_ROOT.exists():
+        return 0
+    dirs = sorted(
+        (p for p in SNAPSHOT_ROOT.iterdir() if p.is_dir()),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if len(dirs) <= keep:
+        return 0
+    to_delete = dirs[: len(dirs) - keep]
+    n = 0
+    for d in to_delete:
+        try:
+            shutil.rmtree(d)
+            n += 1
+        except OSError as e:
+            cprint("warn", f"failed to prune {d}: {e}")
+    return n
+
+
+def list_snapshots() -> list[Snapshot]:
+    if not SNAPSHOT_ROOT.exists():
+        return []
+    out: list[Snapshot] = []
+    dirs = sorted(
+        (p for p in SNAPSHOT_ROOT.iterdir() if p.is_dir()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for d in dirs:
+        mf_path = d / "manifest.json"
+        try:
+            mf = json.loads(mf_path.read_text(encoding="utf-8")) if mf_path.exists() else {}
+        except json.JSONDecodeError:
+            mf = {"__corrupt__": True}
+        out.append(Snapshot(dir=d, manifest=mf))
+    return out
+
+
+def create_snapshot(user_choices: dict[str, Any], planned_restarts: list[str]) -> Snapshot:
+    SNAPSHOT_ROOT.mkdir(parents=True, exist_ok=True)
+    try:
+        st = shutil.disk_usage(SNAPSHOT_ROOT)
+        if st.free < 5 * 1024 * 1024:
+            raise FatalError("not enough free space under ~/.local/state for snapshot")
+    except OSError as e:
+        raise FatalError(f"cannot stat snapshot dir: {e}") from e
+
+    snap_dir = SNAPSHOT_ROOT / _snapshot_id()
+    snap_dir.mkdir(parents=True, exist_ok=False)
+
+    snapshotted: list[str] = []
+    for name, src in SNAPSHOT_FILES:
+        if src.exists():
+            shutil.copy2(src, snap_dir / name)
+            snapshotted.append(name)
+
+    prev = None
+    existing = list_snapshots()
+    for s in existing:
+        if s.dir == snap_dir:
+            continue
+        prev = s.id
+        break
+
+    manifest = {
+        "created_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "user_choices": user_choices,
+        "files_snapshotted": snapshotted,
+        "planned_restarts": planned_restarts,
+        "status": "snapshot_only",
+        "errors": [],
+        "previous_snapshot": prev,
+    }
+    (snap_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return Snapshot(dir=snap_dir, manifest=manifest)
+
+
+def finalize_snapshot(snap: Snapshot, status: str, errors: list[str] | None = None) -> None:
+    snap.manifest["status"] = status
+    if errors:
+        snap.manifest["errors"] = errors
+    (snap.dir / "manifest.json").write_text(
+        json.dumps(snap.manifest, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def restore_snapshot(snap: Snapshot, *, dry_run: bool = False) -> None:
+    for name, dest in SNAPSHOT_FILES:
+        src = snap.dir / name
+        if not src.exists():
+            continue
+        cprint("info", f"restoring {dest} <- {src}")
+        if dry_run:
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # stage a tmp then os.replace for atomicity
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{dest.name}.", suffix=".restore", dir=str(dest.parent)
+        )
+        os.close(fd)
+        shutil.copy2(src, tmp_name)
+        os.replace(tmp_name, dest)
+
+
+def auto_rollback(snap: Snapshot, reason: str, errors: list[str]) -> None:
+    cprint("err", f"auto-rollback: {reason}")
+    try:
+        restore_snapshot(snap)
+        finalize_snapshot(snap, "rolled_back", errors + [f"trigger: {reason}"])
+        cprint("ok", f"files restored from snapshot {snap.id}")
+        cprint(
+            "info",
+            "you may need to manually re-run restarts (docker compose / llama-services.sh) "
+            "to pick up the restored files.",
+        )
+    except Exception as e:  # noqa: BLE001
+        finalize_snapshot(
+            snap, "applied_with_errors",
+            errors + [f"rollback failure: {e}", f"original trigger: {reason}"],
+        )
+        cprint("err", f"ROLLBACK FAILED: {e}. Snapshot at {snap.dir}")
+
+
+# ---------------------------------------------------------------------------
+# Config writers
+# ---------------------------------------------------------------------------
+
+
+def update_honcho_toml(
+    plan: PlannedChanges, *, dry_run: bool
+) -> tuple[str, str]:
+    """Return (old_text, new_text). Writes atomically unless dry_run."""
+    old_text = HONCHO_TOML.read_text(encoding="utf-8")
+    doc = tomlkit.parse(old_text)
+
+    if plan.honcho_chat:
+        for path in CHAT_BLOCKS:
+            block = toml_get(doc, path)
+            if block is None:
+                continue
+            block["model"] = plan.honcho_chat.model
+            overrides = block.get("overrides")
+            if overrides is None:
+                continue
+            overrides["base_url"] = plan.honcho_chat.base_url_docker
+
+    if plan.honcho_embed:
+        block = toml_get(doc, EMBED_BLOCK)
+        if block is not None:
+            block["model"] = plan.honcho_embed.model
+            overrides = block.get("overrides")
+            if overrides is not None:
+                overrides["base_url"] = plan.honcho_embed.base_url_docker
+
+    # Apply caps (co-moving knobs)
+    if "app.GET_CONTEXT_MAX_TOKENS" in plan.caps and "app" in doc:
+        doc["app"]["GET_CONTEXT_MAX_TOKENS"] = plan.caps["app.GET_CONTEXT_MAX_TOKENS"]
+    if "dialectic.MAX_INPUT_TOKENS" in plan.caps and "dialectic" in doc:
+        doc["dialectic"]["MAX_INPUT_TOKENS"] = plan.caps["dialectic.MAX_INPUT_TOKENS"]
+    if "embedding.VECTOR_DIMENSIONS" in plan.caps and "embedding" in doc:
+        doc["embedding"]["VECTOR_DIMENSIONS"] = plan.caps["embedding.VECTOR_DIMENSIONS"]
+    if "vector_store.DIMENSIONS" in plan.caps and "vector_store" in doc:
+        doc["vector_store"]["DIMENSIONS"] = plan.caps["vector_store.DIMENSIONS"]
+    if "embedding.MAX_INPUT_TOKENS" in plan.caps and "embedding" in doc:
+        doc["embedding"]["MAX_INPUT_TOKENS"] = plan.caps["embedding.MAX_INPUT_TOKENS"]
+
+    new_text = tomlkit.dumps(doc)
+    if new_text != old_text:
+        atomic_write(HONCHO_TOML, new_text, dry_run=dry_run)
+    return old_text, new_text
+
+
+_LLAMA_KEYS: tuple[str, ...] = (
+    "CHAT_HF_SPEC", "CHAT_ALIAS", "CHAT_CTX", "CHAT_NGL", "CHAT_IS_MOE",
+    "CHAT_REASONING_OFF", "CHAT_PARALLEL", "EMBED_BLOB", "EMBED_ALIAS", "EMBED_NGL",
+)
+
+
+def _format_conf_value(key: str, value: str) -> str:
+    # Quote string-ish values; leave ints unquoted.
+    if re.fullmatch(r"-?\d+", value):
+        return value
+    return f'"{value}"'
+
+
+def rewrite_llama_conf_text(old_text: str, updates: dict[str, str]) -> str:
+    """Line-based rewrite. Unknown lines preserved; matching keys get new values."""
+    out_lines: list[str] = []
+    seen: set[str] = set()
+    for raw in old_text.splitlines(keepends=True):
+        line = raw.rstrip("\n")
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line.strip())
+        if not m or line.lstrip().startswith("#"):
+            out_lines.append(raw)
+            continue
+        key = m.group(1)
+        if key in updates:
+            new_val = _format_conf_value(key, updates[key])
+            # preserve leading whitespace if any
+            leading = re.match(r"^(\s*)", raw).group(1)
+            end = "\n" if raw.endswith("\n") else ""
+            out_lines.append(f"{leading}{key}={new_val}{end}")
+            seen.add(key)
+        else:
+            out_lines.append(raw)
+    # Keys not present in file but requested: append at end with a blank sentinel.
+    missing = [k for k in updates if k not in seen]
+    if missing:
+        if out_lines and not out_lines[-1].endswith("\n"):
+            out_lines.append("\n")
+        out_lines.append("# --- appended by switch-endpoints.py ---\n")
+        for k in missing:
+            out_lines.append(f"{k}={_format_conf_value(k, updates[k])}\n")
+    return "".join(out_lines)
+
+
+def update_llama_conf(
+    plan: PlannedChanges, *, dry_run: bool
+) -> tuple[str, str]:
+    if not LLAMA_CONF.exists():
+        return "", ""
+    old_text = LLAMA_CONF.read_text(encoding="utf-8")
+    updates: dict[str, str] = {}
+
+    if plan.llama_chat_params is not None:
+        p = plan.llama_chat_params
+        updates.update({
+            "CHAT_HF_SPEC": p.hf_spec,
+            "CHAT_ALIAS": p.alias,
+            "CHAT_CTX": str(p.ctx),
+            "CHAT_NGL": str(p.ngl),
+            "CHAT_IS_MOE": "1" if p.is_moe else "0",
+            "CHAT_REASONING_OFF": "1" if p.reasoning_off else "0",
+            "CHAT_PARALLEL": str(p.parallel),
+        })
+    if plan.llama_embed_params is not None:
+        # Only alias is typically changed here; EMBED_BLOB requires manual spec.
+        updates["EMBED_ALIAS"] = plan.llama_embed_params.alias
+
+    if not updates:
+        return old_text, old_text
+
+    new_text = rewrite_llama_conf_text(old_text, updates)
+    if new_text != old_text:
+        atomic_write(LLAMA_CONF, new_text, dry_run=dry_run)
+    return old_text, new_text
+
+
+def update_hermes_config(
+    plan: PlannedChanges, *, dry_run: bool, update_provider_list: bool = False
+) -> list[str]:
+    """Run hermes config set ... for base_url/default. Returns log lines. No-op if
+    hermes CLI is absent. Caller guarantees snapshot was taken first."""
+    log: list[str] = []
+    if plan.hermes is None:
+        return log
+    if shutil.which("hermes") is None:
+        cprint("warn", "hermes CLI not on PATH; skipping Hermes config update")
+        return log
+
+    base = plan.hermes.base_url_host  # Hermes runs on host, keep user form
+    model = plan.hermes.model
+    cmds = [
+        ["hermes", "config", "set", "model.base_url", base],
+        ["hermes", "config", "set", "model.default", model],
+    ]
+    for cmd in cmds:
+        cprint("info", f"$ {' '.join(cmd)}")
+        if dry_run:
+            log.append(" ".join(cmd) + "  [dry-run]")
+            continue
+        r = subprocess.run(cmd, check=False, capture_output=True, text=True)
+        log.append(f"{' '.join(cmd)} -> rc={r.returncode}")
+        if r.returncode != 0:
+            raise FatalError(f"hermes config set failed: {r.stderr.strip() or r.stdout.strip()}")
+
+    # Optional provider-list update (ruamel-based so we preserve comments)
+    if update_provider_list and not dry_run:
+        try:
+            yaml = YAML(typ="rt")
+            yaml.preserve_quotes = True
+            with HERMES_YAML.open("r", encoding="utf-8") as f:
+                data = yaml.load(f)
+            providers = data.get("providers") or {}
+            prov_name = (data.get("model") or {}).get("provider") or ""
+            if prov_name and prov_name in providers:
+                providers[prov_name]["default_model"] = model
+                providers[prov_name]["api"] = base
+                models_list = providers[prov_name].get("models") or []
+                if model not in models_list:
+                    models_list.insert(0, model)
+                    providers[prov_name]["models"] = models_list
+                with HERMES_YAML.open("w", encoding="utf-8") as f:
+                    yaml.dump(data, f)
+                log.append(f"updated providers[{prov_name}] via ruamel")
+        except Exception as e:  # noqa: BLE001
+            cprint("warn", f"provider-list update failed: {e}")
+
+    return log
+
+
+# ---------------------------------------------------------------------------
+# Restart orchestration
+# ---------------------------------------------------------------------------
+
+
+def restart_honcho_compose(*, dry_run: bool) -> subprocess.CompletedProcess[str] | None:
+    # Use --no-deps so database/redis are not recreated (only api/deriver
+    # need to re-read config.toml). Also pass the override file explicitly:
+    # honcho/docker-compose.override.yml does `ports: !reset []` for
+    # database/redis so they do not fight llm-postgres / llm-redis on the
+    # host. Compose auto-merges override only when no -f is passed; once we
+    # specify -f we have to list both files ourselves.
+    override = HONCHO_COMPOSE.parent / "docker-compose.override.yml"
+    f_args: list[str] = ["-f", str(HONCHO_COMPOSE)]
+    if override.exists():
+        f_args += ["-f", str(override)]
+    cmd = ["docker", "compose", *f_args, "up", "-d",
+           "--force-recreate", "--no-deps", "api", "deriver"]
+    cprint("step", f"restart honcho: {' '.join(cmd)}")
+    if dry_run:
+        return None
+    return subprocess.run(cmd, check=False, capture_output=True, text=True)
+
+
+def restart_llama(*, dry_run: bool) -> subprocess.CompletedProcess[str] | None:
+    cmd = [str(LLAMA_RESTART_SH), "restart"]
+    cprint("step", f"restart llama-services: {' '.join(cmd)}")
+    if dry_run:
+        return None
+    return subprocess.run(cmd, check=False, capture_output=True, text=True)
+
+
+# ---------------------------------------------------------------------------
+# Interactive UI — switching flow
+# ---------------------------------------------------------------------------
+
+
+def _print_current_state() -> None:
+    cprint("step", "Current state")
+    try:
+        doc = read_honcho_toml()
+    except FileNotFoundError:
+        cprint("err", f"honcho config.toml not found at {HONCHO_TOML}")
+        raise FatalError("no config.toml")
+    c_base, c_model = current_honcho_chat(doc)
+    e_base, e_model = current_honcho_embed(doc)
+    caps = current_caps(doc)
+    h_base, h_model = current_hermes_summary()
+    llama = current_chat_params_from_conf()
+
+    print(f"  Honcho chat  : {c_base}  model={c_model}")
+    print(f"  Honcho embed : {e_base}  model={e_model}  "
+          f"(dim={caps['embedding.VECTOR_DIMENSIONS']})")
+    print(f"  Hermes       : {h_base}  model={h_model}")
+    print(f"  llama-server : {llama.hf_spec}  alias={llama.alias}  "
+          f"ctx={llama.ctx}  ngl={llama.ngl}  "
+          f"moe={'yes' if llama.is_moe else 'no'}  parallel={llama.parallel}")
+    print(f"  caps         : app.GET_CONTEXT_MAX_TOKENS={caps['app.GET_CONTEXT_MAX_TOKENS']}, "
+          f"dialectic.MAX_INPUT_TOKENS={caps['dialectic.MAX_INPUT_TOKENS']}")
+
+
+def _prompt_endpoint(
+    label: str, *, default_url: str, allow_llama_model_change: bool = False,
+    for_embed: bool = False,
+) -> tuple[str, bool]:
+    """Return (chosen_host_url, wants_llama_model_change). Empty chosen_host_url = skip.
+
+    for_embed=True: offer the :8081 embed server instead of :8080 chat, since
+    the chat server does not serve /embeddings and its n_embd reflects the
+    chat model's hidden size rather than an embedding dim.
+    """
+    llama_port = 8081 if for_embed else 8080
+    llama_url = f"http://localhost:{llama_port}/v1"
+    llama_label = "llama-server (embed, :8081)" if for_embed else "llama-server (chat,  :8080)"
+    choices = [
+        questionary.Choice(f"{llama_label} — {llama_url}", value="ll"),
+        questionary.Choice(f"ollama                  — http://localhost:{OLLAMA_PORT_HINT}/v1", value="ol"),
+        questionary.Choice("custom URL...", value="custom"),
+        questionary.Choice(f"no change (keep {default_url or '<empty>'})", value="keep"),
+    ]
+    if allow_llama_model_change:
+        choices.insert(
+            3,
+            questionary.Choice(
+                "change the llama-server model itself (rewrites llama-services.conf)",
+                value="llama_swap",
+            ),
+        )
+    pick = questionary.select(f"{label} — target endpoint?", choices=choices).ask()
+    if pick is None:
+        raise KeyboardInterrupt
+    if pick == "keep":
+        return (default_url or "", False)
+    if pick == "ll":
+        return (llama_url, False)
+    if pick == "ol":
+        return (f"http://localhost:{OLLAMA_PORT_HINT}/v1", False)
+    if pick == "llama_swap":
+        return ("http://localhost:8080/v1", True)
+    # custom
+    url = questionary.text(
+        f"{label} — base URL (include /v1)", default=default_url or llama_url
+    ).ask()
+    if url is None:
+        raise KeyboardInterrupt
+    return (normalize_base(url), False)
+
+
+def _pick_model(base_url: str, *, purpose: str, default_model: str,
+                embed_filter: bool = False) -> str:
+    models = probe_models(base_url)
+    if not models:
+        cprint("warn", "could not list models; enter manually")
+        m = questionary.text(f"{purpose} — model id", default=default_model).ask()
+        if m is None:
+            raise KeyboardInterrupt
+        return m.strip()
+    ids = [m.get("id") for m in models if m.get("id")]
+    if not ids:
+        m = questionary.text(f"{purpose} — model id", default=default_model).ask()
+        if m is None:
+            raise KeyboardInterrupt
+        return m.strip()
+    # For the embed axis, most backends list chat models too. Prefer
+    # name-based filtering (fast, no extra API calls) and fall back to the
+    # full list if the heuristic produces nothing.
+    if embed_filter:
+        markers = ("embed", "embedding", "bge-", "e5-", "gte-", "bert")
+        filtered = [x for x in ids if any(m in x.lower() for m in markers)]
+        if filtered:
+            ids = filtered
+        else:
+            cprint("warn", "no embedding-looking models found by name; showing all")
+    choices = [questionary.Choice(x, value=x) for x in ids] + [
+        questionary.Choice("<enter manually>", value="__manual__"),
+    ]
+    pick = questionary.select(
+        f"{purpose} — which model at {base_url}?",
+        choices=choices,
+        default=default_model if default_model in ids else ids[0],
+    ).ask()
+    if pick is None:
+        raise KeyboardInterrupt
+    if pick == "__manual__":
+        m = questionary.text("model id", default=default_model).ask()
+        if m is None:
+            raise KeyboardInterrupt
+        return m.strip()
+    return pick
+
+
+def _warn_ollama_pitfalls(base_url: str, model: str, meta: ModelMeta | None) -> list[str]:
+    warnings: list[str] = []
+    if not looks_like_ollama(base_url):
+        return warnings
+    ceiling = ollama_context_ceiling()
+    if ceiling:
+        warnings.append(
+            f"ollama OLLAMA_CONTEXT_LENGTH={ceiling}; "
+            f"Honcho caps will be capped at min(ceiling-{CTX_HEADROOM}, requested)."
+        )
+    else:
+        warnings.append(
+            "ollama OLLAMA_CONTEXT_LENGTH not detected via systemctl; default is 4096. "
+            "Prompts over that are silently truncated."
+        )
+    if meta and meta.arch and meta.arch.lower().startswith("qwen3"):
+        warnings.append(
+            f"qwen3-family model '{model}' on ollama: create a Modelfile with "
+            "`PARAMETER think false` and use that alias, or message.content will be empty."
+        )
+    warnings.append("ollama OpenAI-compat tool-call support varies by model; "
+                    "llama-server is preferred for tool-heavy workflows.")
+    return warnings
+
+
+def _pick_honcho_chat(plan: PlannedChanges, current_url: str, current_model: str) -> bool:
+    """Returns True if the user asked to change the llama-server model."""
+    url_host, swap_llama = _prompt_endpoint(
+        "A: Honcho chat", default_url=current_url, allow_llama_model_change=True
+    )
+    if not url_host:
+        return False
+    if url_host == current_url and not swap_llama:
+        # still allow a no-op endpoint, but they may want to pick a different model
+        pass
+
+    if swap_llama:
+        # We'll do axis D later; mark chat endpoint as llama-server:8080 and defer model until we know alias
+        plan.honcho_chat = EndpointChoice(
+            base_url_host=url_host,
+            base_url_docker=to_docker_url(url_host),
+            model="",  # filled after D picks alias
+            meta=None,
+        )
+        return True
+
+    model = _pick_model(url_host, purpose="Honcho chat", default_model=current_model)
+    meta = probe_model_meta(url_host, model)
+    plan.honcho_chat = EndpointChoice(
+        base_url_host=url_host,
+        base_url_docker=to_docker_url(url_host),
+        model=model,
+        meta=meta,
+    )
+    plan.warnings.extend(_warn_ollama_pitfalls(url_host, model, meta))
+    return False
+
+
+def _pick_honcho_embed(plan: PlannedChanges, current_url: str, current_model: str,
+                       current_dim: int) -> None:
+    url_host, _ = _prompt_endpoint("B: Honcho embed", default_url=current_url, for_embed=True)
+    if not url_host:
+        return
+    model = _pick_model(url_host, purpose="Honcho embed", default_model=current_model,
+                       embed_filter=True)
+    meta = probe_model_meta(url_host, model)
+    if meta and meta.n_embd and current_dim and meta.n_embd != current_dim:
+        cprint(
+            "err",
+            f"embedding DIM mismatch: selected model reports n_embd={meta.n_embd}, "
+            f"current pgvector DIM is {current_dim}. DB migration required. "
+            "Aborting the embed switch (chat/hermes axes unaffected).",
+        )
+        return
+    plan.honcho_embed = EndpointChoice(
+        base_url_host=url_host,
+        base_url_docker=to_docker_url(url_host),
+        model=model,
+        meta=meta,
+    )
+    if meta:
+        plan.caps["embedding.VECTOR_DIMENSIONS"] = meta.n_embd or current_dim
+        plan.caps["vector_store.DIMENSIONS"] = meta.n_embd or current_dim
+        if meta.n_ctx_train:
+            plan.caps["embedding.MAX_INPUT_TOKENS"] = meta.n_ctx_train
+
+
+def _pick_hermes(plan: PlannedChanges, current_url: str, current_model: str) -> None:
+    if plan.honcho_chat and plan.honcho_chat.model:
+        default_to_honcho = questionary.confirm(
+            "C: Hermes — use the same endpoint/model as Honcho chat?", default=True
+        ).ask()
+        if default_to_honcho is None:
+            raise KeyboardInterrupt
+        if default_to_honcho:
+            plan.hermes = EndpointChoice(
+                base_url_host=plan.honcho_chat.base_url_host,
+                base_url_docker=plan.honcho_chat.base_url_host,  # hermes runs on host
+                model=plan.honcho_chat.model,
+                meta=plan.honcho_chat.meta,
+            )
+            return
+    url_host, _ = _prompt_endpoint("C: Hermes", default_url=current_url)
+    if not url_host:
+        return
+    model = _pick_model(url_host, purpose="Hermes", default_model=current_model)
+    plan.hermes = EndpointChoice(
+        base_url_host=url_host,
+        base_url_docker=url_host,
+        model=model,
+        meta=probe_model_meta(url_host, model),
+    )
+
+
+def _pick_llama_model(plan: PlannedChanges, current: ChatParams) -> None:
+    spec = questionary.text(
+        "D: llama-server — HF spec or local path (-hf / -m target)",
+        default=current.hf_spec,
+    ).ask()
+    if spec is None:
+        raise KeyboardInterrupt
+    spec = spec.strip()
+
+    # Derive an alias: keep user's spec's short form; allow override.
+    default_alias = current.alias
+    if spec != current.hf_spec:
+        tail = spec.split("/")[-1].split(":")[0]
+        default_alias = tail.lower() if tail else current.alias
+    alias = questionary.text(
+        "D: alias advertised in /v1/models", default=default_alias
+    ).ask()
+    if alias is None:
+        raise KeyboardInterrupt
+    alias = alias.strip()
+
+    # Try probing llama-server at its current endpoint to get meta — only useful if the user
+    # just changed alias/spec but the server still holds the old model. Otherwise skip and ask.
+    meta: ModelMeta | None = None
+    probe = probe_model_meta("http://localhost:8080/v1", alias)
+    if probe and probe.n_ctx_train:
+        meta = probe
+
+    # We often cannot probe the *new* spec without first pulling it. Fall back to asking.
+    if meta is None:
+        cprint("info", "could not probe meta for the new spec — asking interactively.")
+        ctx = int(questionary.text(
+            "  -c context length", default=str(current.ctx),
+            validate=lambda s: s.isdigit() or "must be a positive integer",
+        ).ask() or current.ctx)
+        ngl = int(questionary.text(
+            "  -ngl GPU layers (99 = all)", default=str(current.ngl),
+            validate=lambda s: s.isdigit() or "must be a positive integer",
+        ).ask() or current.ngl)
+        is_moe = questionary.confirm(
+            "  is this an MoE model (adds -ot 'ffn_(up|down|gate)_exps=CPU')?",
+            default=current.is_moe,
+        ).ask()
+        reasoning_off = questionary.confirm(
+            "  qwen3-family (add --reasoning off)?", default=current.reasoning_off
+        ).ask()
+        parallel = int(questionary.text(
+            "  --parallel (concurrent slots; 70B dense → 1 recommended)",
+            default=str(current.parallel),
+            validate=lambda s: s.isdigit() or "must be a positive integer",
+        ).ask() or current.parallel)
+        plan.llama_chat_params = ChatParams(
+            hf_spec=spec, alias=alias, ctx=ctx, ngl=ngl,
+            is_moe=bool(is_moe), reasoning_off=bool(reasoning_off), parallel=parallel,
+        )
+    else:
+        proposed = derive_chat_params(meta, current=current, hf_spec=spec, alias=alias)
+        cprint(
+            "info",
+            f"proposed: ctx={proposed.ctx} ngl={proposed.ngl} "
+            f"moe={'yes' if proposed.is_moe else 'no'} "
+            f"reasoning_off={proposed.reasoning_off} parallel={proposed.parallel}",
+        )
+        accept = questionary.confirm("accept proposed values?", default=True).ask()
+        if not accept:
+            ctx = int(questionary.text("  -c", default=str(proposed.ctx)).ask() or proposed.ctx)
+            ngl = int(questionary.text("  -ngl", default=str(proposed.ngl)).ask() or proposed.ngl)
+            is_moe = questionary.confirm("  MoE?", default=proposed.is_moe).ask()
+            reasoning_off = questionary.confirm(
+                "  --reasoning off?", default=proposed.reasoning_off
+            ).ask()
+            parallel = int(questionary.text(
+                "  --parallel", default=str(proposed.parallel)
+            ).ask() or proposed.parallel)
+            proposed = ChatParams(
+                hf_spec=spec, alias=alias, ctx=ctx, ngl=ngl,
+                is_moe=bool(is_moe), reasoning_off=bool(reasoning_off), parallel=parallel,
+            )
+        plan.llama_chat_params = proposed
+
+    # Chat endpoint model points to the new alias
+    if plan.honcho_chat:
+        plan.honcho_chat = dataclasses.replace(plan.honcho_chat, model=alias)
+    else:
+        plan.honcho_chat = EndpointChoice(
+            base_url_host="http://localhost:8080/v1",
+            base_url_docker=to_docker_url("http://localhost:8080/v1"),
+            model=alias,
+            meta=None,
+        )
+
+
+def _compute_honcho_caps(plan: PlannedChanges, current: dict[str, int]) -> None:
+    """Co-move app.GET_CONTEXT_MAX_TOKENS and dialectic.MAX_INPUT_TOKENS with chat ctx."""
+    ctx: int | None = None
+    if plan.llama_chat_params is not None:
+        ctx = plan.llama_chat_params.ctx
+    elif plan.honcho_chat and plan.honcho_chat.meta and plan.honcho_chat.meta.n_ctx_train:
+        ctx = min(plan.honcho_chat.meta.n_ctx_train, CHAT_CTX_HARD_CAP)
+
+    if ctx is None:
+        return
+    # If we're going to ollama, cap by OLLAMA_CONTEXT_LENGTH as well
+    if plan.honcho_chat and looks_like_ollama(plan.honcho_chat.base_url_host):
+        ceiling = ollama_context_ceiling() or 4096
+        ctx = min(ctx, ceiling)
+    target = max(ctx - CTX_HEADROOM, 1024)
+    if current.get("app.GET_CONTEXT_MAX_TOKENS", 0) != target:
+        plan.caps["app.GET_CONTEXT_MAX_TOKENS"] = target
+    if current.get("dialectic.MAX_INPUT_TOKENS", 0) != target:
+        plan.caps["dialectic.MAX_INPUT_TOKENS"] = target
+
+
+# ---------------------------------------------------------------------------
+# Top-level flow
+# ---------------------------------------------------------------------------
+
+
+def _diff_and_confirm(
+    plan: PlannedChanges, *, dry_run: bool
+) -> tuple[str, str, str, str]:
+    """Render both file diffs (without actually writing). Returns (toml_old, toml_new,
+    conf_old, conf_new)."""
+    # Use tempfile-free dry run: call update_* with dry_run=True to get texts
+    toml_old, toml_new = update_honcho_toml(plan, dry_run=True)
+    conf_old, conf_new = update_llama_conf(plan, dry_run=True)
+
+    if toml_new != toml_old:
+        cprint("step", "honcho/config.toml diff")
+        print(render_diff(toml_old, toml_new, "honcho/config.toml"))
+    if conf_new != conf_old:
+        cprint("step", "scripts/llama-services.conf diff")
+        print(render_diff(conf_old, conf_new, "scripts/llama-services.conf"))
+    if plan.hermes:
+        cprint(
+            "step",
+            f"hermes: set model.base_url={plan.hermes.base_url_host} "
+            f"model.default={plan.hermes.model}",
+        )
+    if plan.warnings:
+        cprint("step", "warnings")
+        for w in plan.warnings:
+            cprint("warn", w)
+    return toml_old, toml_new, conf_old, conf_new
+
+
+def _user_choice_summary(plan: PlannedChanges) -> dict[str, Any]:
+    def ec(e: EndpointChoice | None) -> dict[str, str] | None:
+        if e is None:
+            return None
+        return {"base_url": e.base_url_host, "model": e.model}
+
+    return {
+        "honcho_chat": ec(plan.honcho_chat),
+        "honcho_embed": ec(plan.honcho_embed),
+        "hermes": ec(plan.hermes),
+        "llama_chat_params": dataclasses.asdict(plan.llama_chat_params)
+            if plan.llama_chat_params else None,
+        "llama_embed_params": dataclasses.asdict(plan.llama_embed_params)
+            if plan.llama_embed_params else None,
+        "caps": plan.caps,
+    }
+
+
+def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
+    _print_current_state()
+
+    doc = read_honcho_toml()
+    c_url, c_model = current_honcho_chat(doc)
+    e_url, e_model = current_honcho_embed(doc)
+    caps_now = current_caps(doc)
+    h_url, h_model = current_hermes_summary()
+    llama_now = current_chat_params_from_conf()
+
+    plan = PlannedChanges()
+
+    try:
+        swap_llama = _pick_honcho_chat(plan, c_url, c_model)
+        if swap_llama:
+            _pick_llama_model(plan, llama_now)
+
+        if with_embed:
+            _pick_honcho_embed(plan, e_url, e_model, caps_now["embedding.VECTOR_DIMENSIONS"])
+        else:
+            cprint(
+                "info",
+                "skipping Honcho embed axis (pass --with-embed to include). "
+                "Current: {model} @ {url} (dim={dim})".format(
+                    model=e_model, url=e_url, dim=caps_now["embedding.VECTOR_DIMENSIONS"]
+                ),
+            )
+        _pick_hermes(plan, h_url, h_model)
+    except KeyboardInterrupt:
+        cprint("warn", "cancelled during prompts; no changes made")
+        return
+
+    _compute_honcho_caps(plan, caps_now)
+
+    if not (plan.honcho_chat or plan.honcho_embed or plan.hermes
+            or plan.llama_chat_params or plan.caps):
+        cprint("info", "no changes selected; nothing to do")
+        return
+
+    # Pre-write: show diffs (dry)
+    toml_old, toml_new, conf_old, conf_new = _diff_and_confirm(plan, dry_run=True)
+    if toml_new == toml_old and conf_new == conf_old and not plan.hermes:
+        cprint("info", "resolved diffs are empty; nothing to write")
+        return
+
+    if dry_run:
+        cprint("info", "dry-run: no writes, no restarts, no snapshot")
+        return
+
+    confirm = questionary.confirm("apply these changes?", default=False).ask()
+    if not confirm:
+        cprint("warn", "aborted by user; no changes made")
+        return
+
+    # ---- snapshot, then writes, then restarts. auto-rollback on error. ----
+    planned_restarts: list[str] = []
+    if plan.needs_honcho_restart():
+        planned_restarts.append(
+            "docker compose -f honcho/docker-compose.yml up -d --force-recreate api deriver"
+        )
+    if plan.needs_llama_restart():
+        planned_restarts.append("scripts/llama-services.sh restart")
+
+    snap = create_snapshot(_user_choice_summary(plan), planned_restarts)
+    cprint("ok", f"snapshot: {snap.dir}")
+
+    errors: list[str] = []
+    try:
+        # 1. writes
+        if toml_new != toml_old:
+            update_honcho_toml(plan, dry_run=False)
+            cprint("ok", f"wrote {HONCHO_TOML}")
+        if conf_new != conf_old:
+            update_llama_conf(plan, dry_run=False)
+            cprint("ok", f"wrote {LLAMA_CONF}")
+        if plan.hermes:
+            add_to_catalog = questionary.confirm(
+                "also add this model to the provider catalog? "
+                "(yes = it will also appear in `hermes model`'s picker)",
+                default=True,
+            ).ask()
+            update_hermes_config(
+                plan, dry_run=False, update_provider_list=bool(add_to_catalog)
+            )
+            cprint("ok", "updated hermes config via `hermes config set`"
+                   + (" + provider catalog" if add_to_catalog else ""))
+
+        # 2. restarts
+        if plan.needs_llama_restart():
+            do_restart = questionary.confirm(
+                "restart llama-services now?", default=True
+            ).ask()
+            if do_restart:
+                r = restart_llama(dry_run=False)
+                if r is not None and r.returncode != 0:
+                    err_text = (r.stderr or r.stdout).strip()
+                    cprint("err", f"llama-services rc={r.returncode}:")
+                    for line in err_text.splitlines()[-20:]:
+                        sys.stderr.write(f"    {line}\n")
+                    errors.append(
+                        f"llama-services restart rc={r.returncode}: {err_text[:500]}"
+                    )
+                    raise FatalError("llama-services restart failed")
+        if plan.needs_honcho_restart():
+            do_restart = questionary.confirm(
+                "restart Honcho compose (api + deriver) now?", default=True
+            ).ask()
+            if do_restart:
+                r = restart_honcho_compose(dry_run=False)
+                if r is not None and r.returncode != 0:
+                    err_text = (r.stderr or r.stdout).strip()
+                    cprint("err", f"compose up rc={r.returncode}:")
+                    for line in err_text.splitlines()[-20:]:
+                        sys.stderr.write(f"    {line}\n")
+                    errors.append(f"compose up rc={r.returncode}: {err_text[:500]}")
+                    raise FatalError("docker compose restart failed")
+
+        finalize_snapshot(snap, "applied", errors)
+        cprint("ok", "all writes and restarts succeeded")
+        cprint("info", f"snapshot kept at {snap.dir} for audit")
+    except KeyboardInterrupt:
+        auto_rollback(snap, "interrupted by user (Ctrl-C)", errors)
+        raise
+    except FatalError as e:
+        auto_rollback(snap, str(e), errors)
+        raise
+    except Exception as e:  # noqa: BLE001
+        auto_rollback(snap, f"unexpected: {e}", errors + [repr(e)])
+        raise
+
+
+def cmd_list() -> None:
+    snaps = list_snapshots()
+    if not snaps:
+        cprint("info", f"no snapshots in {SNAPSHOT_ROOT}")
+        return
+    for s in snaps[:SNAPSHOT_KEEP]:
+        mf = s.manifest
+        status = mf.get("status", "?")
+        created = mf.get("created_at", "?")
+        files = ",".join(mf.get("files_snapshotted", []))
+        choices = mf.get("user_choices") or {}
+        chat = (choices.get("honcho_chat") or {}).get("model", "-")
+        embed = (choices.get("honcho_embed") or {}).get("model", "-")
+        hermes = (choices.get("hermes") or {}).get("model", "-")
+        print(f"  {s.id}  {status:<22}  {created}")
+        print(f"      files=[{files}]  chat={chat}  embed={embed}  hermes={hermes}")
+
+
+def cmd_rollback() -> None:
+    snaps = list_snapshots()
+    if not snaps:
+        cprint("err", "no snapshots to roll back to")
+        raise FatalError("empty snapshot dir")
+    target = snaps[0]
+    cprint("info", f"latest snapshot: {target.id} ({target.manifest.get('status', '?')})")
+    yes = questionary.confirm(
+        "restore all files from this snapshot (atomic)?", default=False
+    ).ask()
+    if not yes:
+        cprint("warn", "aborted")
+        return
+    restore_snapshot(target)
+    finalize_snapshot(target, "rolled_back", [])
+    cprint("ok", "restored; manually re-run restarts if services are stuck")
+
+
+def cmd_restore(snap_id: str) -> None:
+    snaps = list_snapshots()
+    target = next((s for s in snaps if s.id == snap_id), None)
+    if target is None:
+        cprint("err", f"no snapshot with id {snap_id}")
+        raise FatalError("unknown snapshot id")
+    cprint("info", f"restore {target.dir}")
+    yes = questionary.confirm("proceed?", default=False).ask()
+    if not yes:
+        return
+    restore_snapshot(target)
+    finalize_snapshot(target, "rolled_back", [])
+    cprint("ok", "restored")
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(
+        prog="switch-endpoints.py",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=textwrap.dedent(
+            """
+            Interactive LLM endpoint/model switcher for the hermes-stack.
+            Writes are snapshot-protected under
+            ~/.local/state/nuncstans-hermes-stack/endpoint-snapshots/
+            (override: $HERMES_STATE_DIR). LRU of 10.
+            """
+        ).strip(),
+    )
+    ap.add_argument("--dry-run", action="store_true",
+                    help="compute and print diffs, skip all writes and restarts")
+    ap.add_argument("--with-embed", action="store_true",
+                    help="also prompt for the Honcho embedding axis (default: skipped — "
+                         "changing embed dim requires a destructive pgvector migration, "
+                         "so it is opt-in)")
+    ap.add_argument("--rollback", action="store_true",
+                    help="restore from the most recent snapshot")
+    ap.add_argument("--restore", metavar="SNAPSHOT_ID",
+                    help="restore from a specific snapshot id (e.g. 20260423-151230.12345)")
+    ap.add_argument("--list-snapshots", action="store_true",
+                    help="list the 10 most recent snapshots with manifest summaries")
+    args = ap.parse_args()
+
+    # Always prune at startup so the user's first mental model matches reality.
+    try:
+        n = prune_snapshots()
+        if n:
+            cprint("info", f"pruned {n} old snapshot(s)")
+    except Exception as e:  # noqa: BLE001
+        cprint("warn", f"prune failed: {e}")
+
+    try:
+        if args.list_snapshots:
+            cmd_list()
+        elif args.rollback:
+            cmd_rollback()
+        elif args.restore:
+            cmd_restore(args.restore)
+        else:
+            cmd_switch(dry_run=args.dry_run, with_embed=args.with_embed)
+    except FatalError as e:
+        cprint("err", str(e))
+        sys.exit(2)
+    except KeyboardInterrupt:
+        cprint("warn", "interrupted")
+        sys.exit(130)
+
+
+if __name__ == "__main__":
+    main()
