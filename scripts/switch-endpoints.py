@@ -1395,26 +1395,179 @@ def _pick_hermes(plan: PlannedChanges, current_url: str, current_model: str) -> 
     )
 
 
-def _pick_llama_model(plan: PlannedChanges, current: ChatParams) -> None:
-    spec = questionary.text(
-        "D: llama-server — HF spec or local path (-hf / -m target)",
-        default=current.hf_spec,
-    ).ask()
-    if spec is None:
-        raise KeyboardInterrupt
-    spec = spec.strip()
+@dataclass(slots=True)
+class _LlamaCandidate:
+    spec: str          # what goes into CHAT_HF_SPEC (HF repo:quant or absolute /path)
+    label: str         # human-readable ("qwen3.6:27b" or "unsloth/Qwen3.6-35B-A3B-GGUF")
+    origin: str        # "ollama" | "hf-cache" | "current-conf"
+    size_gib: float
 
-    # Derive an alias: keep user's spec's short form; allow override.
-    default_alias = current.alias
-    if spec != current.hf_spec:
-        tail = spec.split("/")[-1].split(":")[0]
-        default_alias = tail.lower() if tail else current.alias
-    alias = questionary.text(
-        "D: alias advertised in /v1/models", default=default_alias
+
+_OLLAMA_MODELS_ROOT = Path("/usr/share/ollama/.ollama/models")
+_HF_HUB_ROOT = Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def _list_ollama_blobs() -> list[_LlamaCandidate]:
+    """Enumerate ollama-installed models via their manifests, resolve each to
+    the largest blob (the model tensor layer), and return candidates that
+    llama-server can load via `-m /abs/path`."""
+    results: list[_LlamaCandidate] = []
+    mf_root = _OLLAMA_MODELS_ROOT / "manifests"
+    if not mf_root.is_dir():
+        return results
+    for mf_path in mf_root.rglob("*"):
+        if not mf_path.is_file():
+            continue
+        try:
+            doc = json.loads(mf_path.read_text())
+        except (OSError, ValueError):
+            continue
+        layers = doc.get("layers") or []
+        if not layers:
+            continue
+        biggest = max(layers, key=lambda l: l.get("size", 0))
+        digest = (biggest.get("digest") or "").replace(":", "-")
+        if not digest:
+            continue
+        blob = _OLLAMA_MODELS_ROOT / "blobs" / digest
+        if not blob.exists():
+            continue
+        # manifest path shape: registry.ollama.ai/library/<name>/<tag>  or
+        #                     registry.ollama.ai/<user>/<name>/<tag>
+        rel = mf_path.relative_to(mf_root).parts
+        if len(rel) >= 2:
+            tag = rel[-1]
+            name = rel[-2]
+            label = f"{name}:{tag}"
+        else:
+            label = "/".join(rel)
+        size_gib = biggest.get("size", 0) / 1e9
+        results.append(_LlamaCandidate(str(blob), label, "ollama", size_gib))
+    return sorted(results, key=lambda c: c.label)
+
+
+def _list_hf_cached_ggufs(min_gib: float = 0.5) -> list[_LlamaCandidate]:
+    """Enumerate GGUF files already present in the HuggingFace hub cache
+    (usually downloaded by `llama-server -hf ...`). Skips small files
+    (e.g. mmproj projectors that are <0.5 GiB)."""
+    results: list[_LlamaCandidate] = []
+    if not _HF_HUB_ROOT.is_dir():
+        return results
+    # projector files (vision / multimodal side-tensors) and embed
+    # projectors are not chat-model GGUFs — filter them out so the
+    # picker is not noisy with irrelevant entries.
+    skip_patterns = ("mmproj", "projector", "vision-", "-vision")
+    for gguf in _HF_HUB_ROOT.rglob("*.gguf"):
+        try:
+            if not gguf.is_file():
+                continue
+            size_gib = gguf.stat().st_size / 1e9
+        except OSError:
+            continue
+        if size_gib < min_gib:
+            continue
+        name_lower = gguf.name.lower()
+        if any(pat in name_lower for pat in skip_patterns):
+            continue
+        try:
+            repo_dir = gguf.relative_to(_HF_HUB_ROOT).parts[0]
+        except (IndexError, ValueError):
+            continue
+        if not repo_dir.startswith("models--"):
+            continue
+        repo = "/".join(repo_dir.removeprefix("models--").split("--"))
+        label = f"{repo} ({gguf.name})"
+        results.append(_LlamaCandidate(str(gguf), label, "hf-cache", size_gib))
+    return sorted(results, key=lambda c: c.label)
+
+
+def _derive_alias(spec: str, fallback: str) -> str:
+    """Pick a reasonable advertise-alias from a spec (path or HF repo:quant)."""
+    if not spec:
+        return fallback
+    if spec.startswith("/"):
+        # local path: use the stem of the filename minus common quant suffixes
+        stem = Path(spec).stem
+        for suffix in ("-UD-Q4_K_XL", "-Q4_K_M", "-Q5_K_M", "-Q8_0", "-F16"):
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+                break
+        return stem.lower() or fallback
+    # HF repo:quant -> repo tail, strip "-GGUF"
+    tail = spec.split("/")[-1].split(":")[0]
+    if tail.endswith("-GGUF"):
+        tail = tail[:-5]
+    return tail.lower() if tail else fallback
+
+
+def _pick_llama_model(plan: PlannedChanges, current: ChatParams) -> None:
+    # Enumerate local candidates so the user can pick from ollama blobs or
+    # the HF cache without retyping the path. Always offer manual entry as
+    # escape hatches for not-yet-pulled HF specs or arbitrary paths.
+    candidates: list[_LlamaCandidate] = []
+    candidates.append(
+        _LlamaCandidate(current.hf_spec, f"{current.hf_spec}  [currently running]",
+                        "current-conf", 0.0)
+    )
+    candidates.extend(_list_ollama_blobs())
+    candidates.extend(_list_hf_cached_ggufs())
+
+    # dedupe by spec, keeping the first occurrence (current-conf wins)
+    seen: set[str] = set()
+    uniq: list[_LlamaCandidate] = []
+    for c in candidates:
+        if c.spec in seen:
+            continue
+        seen.add(c.spec)
+        uniq.append(c)
+    candidates = uniq
+
+    def _fmt(c: _LlamaCandidate) -> str:
+        if c.origin == "current-conf":
+            return c.label
+        return f"{c.label}  [{c.origin}, {c.size_gib:.1f} GiB]"
+
+    choices = [questionary.Choice(_fmt(c), value=c) for c in candidates]
+    choices.extend([
+        questionary.Choice("<enter HF spec manually (repo:quant)>", value="__hf__"),
+        questionary.Choice("<enter local GGUF path manually>", value="__path__"),
+    ])
+    pick = questionary.select(
+        "D: llama-server — which GGUF should chat-server load?",
+        choices=choices,
+        default=candidates[0] if candidates else None,
     ).ask()
-    if alias is None:
+    if pick is None:
         raise KeyboardInterrupt
-    alias = alias.strip()
+    if pick == "__hf__":
+        spec = (questionary.text(
+            "HF spec (repo:quant)", default=current.hf_spec
+        ).ask() or "").strip()
+    elif pick == "__path__":
+        spec = (questionary.text(
+            "local GGUF path (absolute)", default=current.hf_spec
+        ).ask() or "").strip()
+    else:
+        spec = pick.spec
+
+    if not spec:
+        raise FatalError("no spec provided; aborting Axis D")
+
+    # Derive an alias: prefer the label from the picked candidate (e.g.
+    # "qwen3.6:27b") so the /v1/models id matches ollama's conventional
+    # name; fall back to deriving from the spec string.
+    if pick not in ("__hf__", "__path__") and pick.origin != "current-conf":
+        default_alias = pick.label
+    else:
+        default_alias = (
+            current.alias if spec == current.hf_spec
+            else _derive_alias(spec, current.alias)
+        )
+    alias = (questionary.text(
+        "D: alias advertised in /v1/models", default=default_alias
+    ).ask() or "").strip()
+    if not alias:
+        alias = default_alias
 
     # Try probing llama-server at its current endpoint to get meta — only useful if the user
     # just changed alias/spec but the server still holds the old model. Otherwise skip and ask.

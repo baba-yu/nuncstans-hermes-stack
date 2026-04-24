@@ -261,6 +261,35 @@ only (leaves chat / hermes / llama axes intact) and prints a message
 telling the operator that a pgvector migration is required. It will not
 attempt the migration itself.
 
+### Axis D model picker: local GGUF enumeration
+
+Axis D ("change the llama-server model itself") lists two local GGUF
+caches as pre-filled candidates so the user does not have to retype
+paths:
+
+- **Ollama blobs** — walks `/usr/share/ollama/.ollama/models/manifests/`,
+  reads each manifest's largest layer digest, and maps it to
+  `/usr/share/ollama/.ollama/models/blobs/sha256-<digest>`. Displayed
+  as `name:tag` (e.g. `qwen3.6:27b  [ollama, 17.4 GiB]`). The value
+  is the absolute blob path — `llama-services.sh` passes it to
+  llama-server as `-m <path>` (it branches on leading `/` to choose
+  `-m` vs `-hf`).
+- **HuggingFace hub cache** — globs
+  `~/.cache/huggingface/hub/models--*/snapshots/*/*.gguf`. Files
+  smaller than 0.5 GiB and projector GGUFs (`mmproj`, `projector`,
+  `vision-*`) are skipped so the picker is not cluttered with
+  non-chat tensors.
+
+Both are offered alongside two manual escape hatches:
+`<enter HF spec manually (repo:quant)>` and `<enter local GGUF path
+manually>`. The currently-running spec (from `llama-services.conf`'s
+`CHAT_HF_SPEC`) is pinned as the first choice and tagged
+`[currently running]`. Aliases default to the selected candidate's
+label (e.g. `qwen3.6:27b` for an ollama pick, `qwen3.6-35b-a3b` for
+an HF pick); `_derive_alias()` strips common quant suffixes
+(`-UD-Q4_K_XL`, `-Q4_K_M`, `-Q8_0`, ...) and the `-GGUF` repo suffix
+so the alias is LLM-compatible without manual cleanup.
+
 ### Unreachable-endpoint manual-entry default
 
 When the endpoint picked for Axis A / B is the local llama-server
