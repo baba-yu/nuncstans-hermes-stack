@@ -63,9 +63,18 @@ HONCHO_COMPOSE = REPO_ROOT / "honcho" / "docker-compose.yml"
 HERMES_YAML = Path(os.environ.get("HERMES_YAML_OVERRIDE", Path.home() / ".hermes" / "config.yaml"))
 
 _DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "nuncstans-hermes-stack"
-SNAPSHOT_ROOT = Path(
-    os.environ.get("HERMES_STATE_DIR") or _DEFAULT_STATE_DIR
-) / "endpoint-snapshots"
+_STATE_DIR = Path(os.environ.get("HERMES_STATE_DIR") or _DEFAULT_STATE_DIR)
+SNAPSHOT_ROOT = _STATE_DIR / "endpoint-snapshots"
+# Mirror of llama-services.sh's LOG_DIR (same env override). PID files for
+# chat / embed / gatekeeper live here; we read them in
+# _snapshot_running_state to record which services were live at snapshot
+# time so auto_rollback can restore that lifecycle state.
+_LOG_DIR = _STATE_DIR
+_LIFECYCLE_PID_FILES: dict[str, Path] = {
+    "chat":  _LOG_DIR / "chat-server.pid",
+    "embed": _LOG_DIR / "embed-server.pid",
+    "gk":    _LOG_DIR / "gatekeeper.pid",
+}
 SNAPSHOT_KEEP = 10
 
 # The 9 chat model_config blocks inside honcho/config.toml.
@@ -96,6 +105,20 @@ USE_COLOR = sys.stdout.isatty()
 
 class FatalError(RuntimeError):
     """Unrecoverable error — main() catches and exits non-zero."""
+
+
+def _ask_or_cancel(q: Any) -> Any:
+    """Call questionary .ask() and convert the None sentinel (Ctrl-C / Ctrl-D
+    / EOF) into a KeyboardInterrupt so the caller's cancel-handling path
+    runs instead of silently treating None as "user accepted default".
+
+    Returns the non-None value unchanged. Meant for every prompt site where
+    cancellation must abort the flow, not coerce to a default.
+    """
+    v = q.ask()
+    if v is None:
+        raise KeyboardInterrupt
+    return v
 
 
 def _c(code: str, s: str) -> str:
@@ -563,6 +586,35 @@ def _snapshot_id() -> str:
     return f"{ts}.{os.getpid()}"
 
 
+def _snapshot_running_state() -> list[str]:
+    """Return the subset of ['chat','embed','gk'] that has a tracked,
+    live PID right now. Replicates llama-services.sh:get_live_pid: pid
+    file present + cat-able + kill -0 succeeds. Anything else (no file,
+    empty file, non-int, dead pid) is treated as 'not running'.
+
+    Used at create_snapshot() time to populate
+    manifest['pre_lifecycle_running'] so auto_rollback knows which
+    services to bring back up vs leave stopped after restoring files.
+    """
+    running: list[str] = []
+    for svc, pid_file in _LIFECYCLE_PID_FILES.items():
+        try:
+            if not pid_file.exists():
+                continue
+            raw = pid_file.read_text(encoding="utf-8").strip()
+            if not raw:
+                continue
+            pid = int(raw)
+        except (OSError, ValueError):
+            continue
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, PermissionError, OSError):
+            continue
+        running.append(svc)
+    return running
+
+
 def prune_snapshots(keep: int = SNAPSHOT_KEEP) -> int:
     """Remove oldest directories when count > keep. Returns delete count."""
     if not SNAPSHOT_ROOT.exists():
@@ -637,9 +689,47 @@ def create_snapshot(user_choices: dict[str, Any], planned_restarts: list[str]) -
         "status": "snapshot_only",
         "errors": [],
         "previous_snapshot": prev,
+        # Side-effect-aware rollback bookkeeping. See
+        # /tmp/rollback-scenarios.md for the contract.
+        "pre_lifecycle_running": _snapshot_running_state(),
+        "lifecycle_attempted": [],
+        "compose_attempted": False,
     }
     (snap_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return Snapshot(dir=snap_dir, manifest=manifest)
+
+
+def _write_manifest(snap: Snapshot) -> None:
+    """Atomic-ish manifest rewrite. We do not bother with a tmp+rename
+    here because the manifest is metadata and a torn write only affects
+    audit, not data correctness — the actual config files use the
+    full atomic_write path."""
+    (snap.dir / "manifest.json").write_text(
+        json.dumps(snap.manifest, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def _persist_lifecycle_attempt(snap: Snapshot, action: str, target: str) -> None:
+    """Record (action, target) into manifest['lifecycle_attempted'] BEFORE
+    the actual subprocess fires. Persisting pre-call means a SIGKILL or
+    Ctrl-C mid-call still leaves a recovery breadcrumb the next
+    invocation (or auto_rollback) can replay against.
+    """
+    snap.manifest.setdefault("lifecycle_attempted", []).append(
+        {"action": action, "target": target}
+    )
+    _write_manifest(snap)
+
+
+def _persist_compose_attempt(snap: Snapshot) -> None:
+    """Mark the manifest as having attempted a compose recreate. Same
+    'before the call' semantics as _persist_lifecycle_attempt: if the
+    user Ctrl-C's mid docker-compose, we still know to replay it after
+    file restore."""
+    if snap.manifest.get("compose_attempted"):
+        return
+    snap.manifest["compose_attempted"] = True
+    _write_manifest(snap)
 
 
 def finalize_snapshot(snap: Snapshot, status: str, errors: list[str] | None = None) -> None:
@@ -669,23 +759,114 @@ def restore_snapshot(snap: Snapshot, *, dry_run: bool = False) -> None:
         os.replace(tmp_name, dest)
 
 
-def auto_rollback(snap: Snapshot, reason: str, errors: list[str]) -> None:
+def _post_rollback_lifecycle_recovery(
+    snap: Snapshot, errors: list[str], *, dry_run: bool = False
+) -> None:
+    """After file restore, bring services back to their pre-snapshot
+    lifecycle state with the now-restored configs. Best-effort: each
+    failed step appends a 'recovery_*' entry to errors and an
+    additional 'manual intervention required' note, but never raises —
+    auto_rollback's caller has already escalated the original error.
+
+    Logic:
+      - For every distinct target in lifecycle_attempted:
+          if target was running pre-snapshot → restart it (load restored conf)
+          else                               → stop it  (it should not be up)
+      - If compose_attempted, replay restart_honcho_compose so api/deriver
+        re-read the restored config.toml.
+
+    Skipped entirely under dry_run=True (defensive — cmd_switch never
+    auto_rollbacks in dry-run today, but the test harness exercises
+    that branch).
+    """
+    if dry_run:
+        return
+
+    lifecycle_attempted = snap.manifest.get("lifecycle_attempted") or []
+    pre_running = set(snap.manifest.get("pre_lifecycle_running") or [])
+    compose_attempted = bool(snap.manifest.get("compose_attempted"))
+
+    # Distinct targets, preserving first-seen order (so the recovery log
+    # is deterministic when a target appears under multiple actions).
+    seen: set[str] = set()
+    targets: list[str] = []
+    for entry in lifecycle_attempted:
+        t = entry.get("target") if isinstance(entry, dict) else None
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        targets.append(t)
+
+    any_failure = False
+    for t in targets:
+        if t in pre_running:
+            action = "restart"
+        else:
+            action = "stop"
+        try:
+            r = llama_services_sub(action, t, dry_run=False)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"recovery_{action}_{t}_exception: {e!r}")
+            any_failure = True
+            continue
+        if r is not None and r.returncode != 0:
+            err_text = ((r.stderr or "") + (r.stdout or "")).strip()
+            errors.append(
+                f"recovery_{action}_{t} rc={r.returncode}: {err_text[:300]}"
+            )
+            any_failure = True
+
+    if compose_attempted:
+        try:
+            r = restart_honcho_compose(dry_run=False)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"recovery_compose_exception: {e!r}")
+            any_failure = True
+        else:
+            if r is not None and r.returncode != 0:
+                err_text = ((r.stderr or "") + (r.stdout or "")).strip()
+                errors.append(
+                    f"recovery_compose rc={r.returncode}: {err_text[:300]}"
+                )
+                any_failure = True
+
+    if any_failure:
+        errors.append(
+            "recovery incomplete — manual intervention required "
+            "(re-run scripts/llama-services.sh restart and "
+            "docker compose up -d --force-recreate api deriver)"
+        )
+
+
+def auto_rollback(
+    snap: Snapshot, reason: str, errors: list[str], *, dry_run: bool = False
+) -> None:
     cprint("err", f"auto-rollback: {reason}")
     try:
-        restore_snapshot(snap)
-        finalize_snapshot(snap, "rolled_back", errors + [f"trigger: {reason}"])
-        cprint("ok", f"files restored from snapshot {snap.id}")
-        cprint(
-            "info",
-            "you may need to manually re-run restarts (docker compose / llama-services.sh) "
-            "to pick up the restored files.",
-        )
+        restore_snapshot(snap, dry_run=dry_run)
     except Exception as e:  # noqa: BLE001
         finalize_snapshot(
             snap, "applied_with_errors",
             errors + [f"rollback failure: {e}", f"original trigger: {reason}"],
         )
         cprint("err", f"ROLLBACK FAILED: {e}. Snapshot at {snap.dir}")
+        return
+
+    cprint("ok", f"files restored from snapshot {snap.id}")
+
+    # Side-effect-aware recovery. Mutates `errors` in-place with
+    # recovery_* prefixed entries; status stays 'rolled_back' regardless
+    # of recovery success per the spec.
+    _post_rollback_lifecycle_recovery(snap, errors, dry_run=dry_run)
+
+    finalize_snapshot(snap, "rolled_back", errors + [f"trigger: {reason}"])
+    if not (snap.manifest.get("lifecycle_attempted") or
+            snap.manifest.get("compose_attempted")):
+        cprint(
+            "info",
+            "no side-effect attempts were recorded; nothing to replay. "
+            "The restored files are now the source of truth.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1296,12 +1477,12 @@ def _pick_honcho_chat(plan: PlannedChanges, current_url: str, current_model: str
     # swap to a different one? Yes branches into Axis D's picker below.
     swap_llama = False
     if _engine_of_url(url_host) == "llama-server":
-        swap_llama = bool(questionary.confirm(
+        swap_llama = bool(_ask_or_cancel(questionary.confirm(
             "load a different GGUF on llama-server? (rewrites "
             "scripts/llama-services.conf and restarts chat-server; default keeps "
             "the currently configured spec)",
             default=False,
-        ).ask())
+        )))
 
     if swap_llama:
         # Axis D will fill plan.honcho_chat.model with the picked alias.
@@ -1543,13 +1724,13 @@ def _pick_llama_model(plan: PlannedChanges, current: ChatParams) -> None:
     if pick is None:
         raise KeyboardInterrupt
     if pick == "__hf__":
-        spec = (questionary.text(
+        spec = _ask_or_cancel(questionary.text(
             "HF spec (repo:quant)", default=current.hf_spec
-        ).ask() or "").strip()
+        )).strip()
     elif pick == "__path__":
-        spec = (questionary.text(
+        spec = _ask_or_cancel(questionary.text(
             "local GGUF path (absolute)", default=current.hf_spec
-        ).ask() or "").strip()
+        )).strip()
     else:
         spec = pick.spec
 
@@ -1566,9 +1747,9 @@ def _pick_llama_model(plan: PlannedChanges, current: ChatParams) -> None:
             current.alias if spec == current.hf_spec
             else _derive_alias(spec, current.alias)
         )
-    alias = (questionary.text(
+    alias = _ask_or_cancel(questionary.text(
         "D: alias advertised in /v1/models", default=default_alias
-    ).ask() or "").strip()
+    )).strip()
     if not alias:
         alias = default_alias
 
@@ -1582,26 +1763,26 @@ def _pick_llama_model(plan: PlannedChanges, current: ChatParams) -> None:
     # We often cannot probe the *new* spec without first pulling it. Fall back to asking.
     if meta is None:
         cprint("info", "could not probe meta for the new spec — asking interactively.")
-        ctx = int(questionary.text(
+        ctx = int(_ask_or_cancel(questionary.text(
             "  -c context length", default=str(current.ctx),
             validate=lambda s: s.isdigit() or "must be a positive integer",
-        ).ask() or current.ctx)
-        ngl = int(questionary.text(
+        )) or current.ctx)
+        ngl = int(_ask_or_cancel(questionary.text(
             "  -ngl GPU layers (99 = all)", default=str(current.ngl),
             validate=lambda s: s.isdigit() or "must be a positive integer",
-        ).ask() or current.ngl)
-        is_moe = questionary.confirm(
+        )) or current.ngl)
+        is_moe = _ask_or_cancel(questionary.confirm(
             "  is this an MoE model (adds -ot 'ffn_(up|down|gate)_exps=CPU')?",
             default=current.is_moe,
-        ).ask()
-        reasoning_off = questionary.confirm(
+        ))
+        reasoning_off = _ask_or_cancel(questionary.confirm(
             "  qwen3-family (add --reasoning off)?", default=current.reasoning_off
-        ).ask()
-        parallel = int(questionary.text(
+        ))
+        parallel = int(_ask_or_cancel(questionary.text(
             "  --parallel (concurrent slots; 70B dense → 1 recommended)",
             default=str(current.parallel),
             validate=lambda s: s.isdigit() or "must be a positive integer",
-        ).ask() or current.parallel)
+        )) or current.parallel)
         plan.llama_chat_params = ChatParams(
             hf_spec=spec, alias=alias, ctx=ctx, ngl=ngl,
             is_moe=bool(is_moe), reasoning_off=bool(reasoning_off), parallel=parallel,
@@ -1614,17 +1795,20 @@ def _pick_llama_model(plan: PlannedChanges, current: ChatParams) -> None:
             f"moe={'yes' if proposed.is_moe else 'no'} "
             f"reasoning_off={proposed.reasoning_off} parallel={proposed.parallel}",
         )
-        accept = questionary.confirm("accept proposed values?", default=True).ask()
+        accept = _ask_or_cancel(questionary.confirm("accept proposed values?", default=True))
         if not accept:
-            ctx = int(questionary.text("  -c", default=str(proposed.ctx)).ask() or proposed.ctx)
-            ngl = int(questionary.text("  -ngl", default=str(proposed.ngl)).ask() or proposed.ngl)
-            is_moe = questionary.confirm("  MoE?", default=proposed.is_moe).ask()
-            reasoning_off = questionary.confirm(
+            ctx = int(_ask_or_cancel(questionary.text(
+                "  -c", default=str(proposed.ctx))) or proposed.ctx)
+            ngl = int(_ask_or_cancel(questionary.text(
+                "  -ngl", default=str(proposed.ngl))) or proposed.ngl)
+            is_moe = _ask_or_cancel(questionary.confirm(
+                "  MoE?", default=proposed.is_moe))
+            reasoning_off = _ask_or_cancel(questionary.confirm(
                 "  --reasoning off?", default=proposed.reasoning_off
-            ).ask()
-            parallel = int(questionary.text(
+            ))
+            parallel = int(_ask_or_cancel(questionary.text(
                 "  --parallel", default=str(proposed.parallel)
-            ).ask() or proposed.parallel)
+            )) or proposed.parallel)
             proposed = ChatParams(
                 hf_spec=spec, alias=alias, ctx=ctx, ngl=ngl,
                 is_moe=bool(is_moe), reasoning_off=bool(reasoning_off), parallel=parallel,
@@ -1803,6 +1987,11 @@ def cmd_switch(
         return
 
     confirm = questionary.confirm("apply these changes?", default=False).ask()
+    if confirm is None:
+        # Ctrl-C at the apply-confirm — no snapshot has been taken yet, so
+        # there is nothing to roll back; just propagate so the outer main()
+        # handler prints "interrupted" and exits 130.
+        raise KeyboardInterrupt
     if not confirm:
         cprint("warn", "aborted by user; no changes made")
         return
@@ -1897,10 +2086,17 @@ def cmd_switch(
                 "apply llama-services lifecycle: " + "; ".join(scope_msg_parts) + "?",
                 default=True,
             ).ask()
+            if do_lifecycle is None:
+                # Post-snapshot cancel: let the outer handler auto-rollback
+                # the writes we already committed rather than silently
+                # skipping the lifecycle (which would leave files rewritten
+                # but services unreachable).
+                raise KeyboardInterrupt
             if do_lifecycle:
                 # Stops + unloads first so VRAM is released before any
                 # 'start' / 'restart' tries to bind the same GPU arena.
                 for t in stop_targets:
+                    _persist_lifecycle_attempt(snap, "stop", t)
                     r = llama_services_sub("stop", t, dry_run=False)
                     if r is not None and r.returncode != 0:
                         err_text = (r.stderr or r.stdout).strip()
@@ -1914,6 +2110,7 @@ def cmd_switch(
                     if not ok:
                         errors.append(f"ollama unload {model_id}: non-OK (see warn above)")
                 for t in restart_targets:
+                    _persist_lifecycle_attempt(snap, "restart", t)
                     r = llama_services_sub("restart", t, dry_run=False)
                     if r is not None and r.returncode != 0:
                         err_text = (r.stderr or r.stdout).strip()
@@ -1925,6 +2122,7 @@ def cmd_switch(
                         )
                         raise FatalError(f"llama-services restart {t} failed")
                 for t in start_targets:
+                    _persist_lifecycle_attempt(snap, "start", t)
                     r = llama_services_sub("start", t, dry_run=False)
                     if r is not None and r.returncode != 0:
                         err_text = (r.stderr or r.stdout).strip()
@@ -1939,7 +2137,11 @@ def cmd_switch(
             do_restart = questionary.confirm(
                 "restart Honcho compose (api + deriver) now?", default=True
             ).ask()
+            if do_restart is None:
+                # Post-snapshot cancel → auto-rollback via outer handler.
+                raise KeyboardInterrupt
             if do_restart:
+                _persist_compose_attempt(snap)
                 r = restart_honcho_compose(dry_run=False)
                 if r is not None and r.returncode != 0:
                     err_text = (r.stderr or r.stdout).strip()

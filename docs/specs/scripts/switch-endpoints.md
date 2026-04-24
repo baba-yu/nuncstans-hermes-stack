@@ -115,16 +115,53 @@ does not touch the database.
     "planned_restarts": ["docker compose ... api deriver", "scripts/llama-services.sh restart"],
     "status": "snapshot_only | applied | applied_with_errors | rolled_back",
     "errors": [],
-    "previous_snapshot": "<id or null>"
+    "previous_snapshot": "<id or null>",
+    "pre_lifecycle_running": ["chat", "gk"],
+    "lifecycle_attempted": [{"action": "stop", "target": "chat"}, ...],
+    "compose_attempted": false
   }
   ```
 - LRU: at startup, any snapshots beyond the 10 most recent are deleted.
 - Auto-rollback triggers: any `FatalError`, any `docker compose` non-zero
   exit, any `llama-services.sh restart` non-zero exit, or `KeyboardInterrupt`
   after writes have begun. Rollback is atomic per file (copy into a
-  sibling tmp, `os.replace` onto destination). Service restarts are **not**
-  re-invoked by the rollback — the manifest notes this and the operator is
-  told to re-run restarts by hand.
+  sibling tmp, `os.replace` onto destination).
+
+### Side-effect-aware rollback (added)
+
+File-only rollback was insufficient: a switcher run that successfully
+wrote new config and then failed during compose restart used to leave
+api/deriver in a half-recreated state with no caller, while the conf
+files were quietly restored. Now `auto_rollback`, after restoring
+files, also replays the side-effect actions that were attempted:
+
+- `pre_lifecycle_running` — captured at `create_snapshot` time by
+  inspecting `<state_dir>/{chat,embed,gk}.pid` (mirrors
+  `llama-services.sh:get_live_pid`). Tells the recovery step which
+  services were live before the run started.
+- `lifecycle_attempted` — appended to `manifest.json` **before** every
+  `llama_services_sub(action, target)` invocation in the lifecycle
+  phase. The "before, not after" ordering means a kill mid-call still
+  records the intent.
+- `compose_attempted` — set True before the first
+  `restart_honcho_compose` call. Same "before, not after" rule.
+
+Recovery rule (in `_post_rollback_lifecycle_recovery`):
+1. For each distinct `target` in `lifecycle_attempted`, run
+   `restart <target>` if the target is in `pre_lifecycle_running`,
+   otherwise `stop <target>`. (The goal is to bring services back to
+   their pre-run lifecycle state, with the now-restored conf.)
+2. If `compose_attempted` is True, replay the compose recreate so
+   `api` / `deriver` re-read the restored `config.toml`.
+3. Recovery actions are best-effort. A non-zero rc appends a
+   `recovery_<action>_<target>` line to `errors` but never raises;
+   `status` stays `rolled_back`. If recovery itself fails, an
+   additional "manual intervention required" error is appended so
+   the operator sees it on `--list-snapshots`.
+
+Out of scope (deliberately not undone): ollama model unloads
+(re-load is lazy and cheap on next request), LLM tokens consumed,
+running Hermes process memory.
 
 ### Chat parameter derivation (axis D)
 
