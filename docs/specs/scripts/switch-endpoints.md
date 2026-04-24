@@ -48,9 +48,11 @@ that this script will not perform for you. Pass `--with-embed` when you
 know what you are doing.
 
 Inside the interactive flow each axis offers the same menu:
-`llama-server` / `ollama` / custom URL / keep current. The Honcho-chat
-axis also offers "change the llama-server model itself" which pivots into
-axis D (rewriting `llama-services.conf`).
+`llama-server` / `ollama` / custom URL / keep current. After the
+Honcho-chat axis picks `llama-server`, a follow-up confirm asks
+whether to also change the GGUF that llama-server loads — answering
+Yes pivots into Axis D (rewriting `llama-services.conf`); No keeps
+the currently configured spec and just points Honcho at it.
 
 ## Options & env vars
 
@@ -263,7 +265,8 @@ attempt the migration itself.
 
 ### Axis D model picker: local GGUF enumeration
 
-Axis D ("change the llama-server model itself") lists two local GGUF
+Axis D (the follow-up "load a different GGUF on llama-server?" branch
+under Axis A) lists two local GGUF
 caches as pre-filled candidates so the user does not have to retype
 paths:
 

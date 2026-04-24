@@ -1142,14 +1142,18 @@ def _print_current_state() -> None:
 
 
 def _prompt_endpoint(
-    label: str, *, default_url: str, allow_llama_model_change: bool = False,
-    for_embed: bool = False,
-) -> tuple[str, bool]:
-    """Return (chosen_host_url, wants_llama_model_change). Empty chosen_host_url = skip.
+    label: str, *, default_url: str, for_embed: bool = False,
+) -> str:
+    """Return chosen_host_url. Empty string = skip.
 
     for_embed=True: offer the :8081 embed server instead of :8080 chat, since
     the chat server does not serve /embeddings and its n_embd reflects the
     chat model's hidden size rather than an embedding dim.
+
+    Whether to also change the GGUF loaded by llama-server is asked as a
+    follow-up confirm by the caller (see _pick_honcho_chat) — that
+    decision belongs nested under "I picked llama-server" rather than as
+    a sibling endpoint choice.
     """
     llama_port = 8081 if for_embed else 8080
     llama_url = f"http://localhost:{llama_port}/v1"
@@ -1160,32 +1164,22 @@ def _prompt_endpoint(
         questionary.Choice("custom URL...", value="custom"),
         questionary.Choice(f"no change (keep {default_url or '<empty>'})", value="keep"),
     ]
-    if allow_llama_model_change:
-        choices.insert(
-            3,
-            questionary.Choice(
-                "change the llama-server model itself (rewrites llama-services.conf)",
-                value="llama_swap",
-            ),
-        )
     pick = questionary.select(f"{label} — target endpoint?", choices=choices).ask()
     if pick is None:
         raise KeyboardInterrupt
     if pick == "keep":
-        return (default_url or "", False)
+        return default_url or ""
     if pick == "ll":
-        return (llama_url, False)
+        return llama_url
     if pick == "ol":
-        return (f"http://localhost:{OLLAMA_PORT_HINT}/v1", False)
-    if pick == "llama_swap":
-        return ("http://localhost:8080/v1", True)
+        return f"http://localhost:{OLLAMA_PORT_HINT}/v1"
     # custom
     url = questionary.text(
         f"{label} — base URL (include /v1)", default=default_url or llama_url
     ).ask()
     if url is None:
         raise KeyboardInterrupt
-    return (normalize_base(url), False)
+    return normalize_base(url)
 
 
 def _llama_alias_default(base_url: str, *, embed_filter: bool) -> str | None:
@@ -1290,22 +1284,31 @@ def _warn_ollama_pitfalls(base_url: str, model: str, meta: ModelMeta | None) -> 
 
 
 def _pick_honcho_chat(plan: PlannedChanges, current_url: str, current_model: str) -> bool:
-    """Returns True if the user asked to change the llama-server model."""
-    url_host, swap_llama = _prompt_endpoint(
-        "A: Honcho chat", default_url=current_url, allow_llama_model_change=True
-    )
+    """Returns True if the user asked to change the llama-server GGUF
+    (which then triggers Axis D). Otherwise the standard model picker
+    runs against the chosen endpoint."""
+    url_host = _prompt_endpoint("A: Honcho chat", default_url=current_url)
     if not url_host:
         return False
-    if url_host == current_url and not swap_llama:
-        # still allow a no-op endpoint, but they may want to pick a different model
-        pass
+
+    # If the user picked the local llama-server, ask the natural
+    # follow-up: keep the GGUF that's loaded (or last configured), or
+    # swap to a different one? Yes branches into Axis D's picker below.
+    swap_llama = False
+    if _engine_of_url(url_host) == "llama-server":
+        swap_llama = bool(questionary.confirm(
+            "load a different GGUF on llama-server? (rewrites "
+            "scripts/llama-services.conf and restarts chat-server; default keeps "
+            "the currently configured spec)",
+            default=False,
+        ).ask())
 
     if swap_llama:
-        # We'll do axis D later; mark chat endpoint as llama-server:8080 and defer model until we know alias
+        # Axis D will fill plan.honcho_chat.model with the picked alias.
         plan.honcho_chat = EndpointChoice(
             base_url_host=url_host,
             base_url_docker=to_docker_url(url_host),
-            model="",  # filled after D picks alias
+            model="",
             meta=None,
         )
         return True
@@ -1324,7 +1327,7 @@ def _pick_honcho_chat(plan: PlannedChanges, current_url: str, current_model: str
 
 def _pick_honcho_embed(plan: PlannedChanges, current_url: str, current_model: str,
                        current_dim: int) -> None:
-    url_host, _ = _prompt_endpoint("B: Honcho embed", default_url=current_url, for_embed=True)
+    url_host = _prompt_endpoint("B: Honcho embed", default_url=current_url, for_embed=True)
     if not url_host:
         return
     model = _pick_model(url_host, purpose="Honcho embed", default_model=current_model,
@@ -1368,7 +1371,7 @@ def _pick_hermes(plan: PlannedChanges, current_url: str, current_model: str) -> 
                 meta=plan.honcho_chat.meta,
             )
             return
-    url_host, _ = _prompt_endpoint("C: Hermes", default_url=current_url)
+    url_host = _prompt_endpoint("C: Hermes", default_url=current_url)
     if not url_host:
         # User picked "no change". If that leaves Hermes pointing somewhere
         # different from the new Honcho chat (or from what it used to track),
