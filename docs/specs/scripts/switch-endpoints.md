@@ -261,6 +261,37 @@ only (leaves chat / hermes / llama axes intact) and prints a message
 telling the operator that a pgvector migration is required. It will not
 attempt the migration itself.
 
+### Container-visible config via bind mount
+
+Honcho's upstream Dockerfile bakes `honcho/config.toml` into
+`/app/config.toml` at image build time, so a switch-endpoints run
+that edits the host file silently does not reach the running `api` /
+`deriver` containers — `--force-recreate` reuses the baked image.
+Symptom: the switcher reports "all writes succeeded" but the deriver
+keeps calling the pre-bake endpoints and the dialectic path never
+sees the new model.
+
+`honcho/docker-compose.override.yml` solves this with a read-only
+bind mount on both services:
+
+```yaml
+services:
+  api:
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+  deriver:
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+```
+
+With the mount in place, a `--force-recreate` is enough to pick up
+config.toml changes — no image rebuild.
+
+`atomic_write` in this script writes with mode `0644` (not the
+tempfile-default 0600) so the container user can read the file. The
+default 0600 was historically permissive enough on the host but broke
+read access inside the container (UID mismatch).
+
 ### Compose restart
 
 `honcho/docker-compose.override.yml` uses `ports: !reset []` on the

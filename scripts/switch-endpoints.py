@@ -146,6 +146,12 @@ def atomic_write(path: Path, content: str, *, dry_run: bool) -> None:
     if dry_run:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
+    # tempfile.mkstemp creates files with mode 0600 by default — that bit
+    # us hard when honcho/config.toml was bind-mounted into the api /
+    # deriver containers (they run as UID 100 'app'; 0600 means only the
+    # host owner UID 1000 can read, so the container got Permission
+    # denied and silently fell back to defaults). Force 0644 so
+    # containers running as arbitrary UIDs can still read the file.
     fd, tmp_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
     )
@@ -153,6 +159,7 @@ def atomic_write(path: Path, content: str, *, dry_run: bool) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
+        os.chmod(tmp, 0o644)
         os.replace(tmp, path)
     except Exception:
         with contextlib.suppress(FileNotFoundError):
