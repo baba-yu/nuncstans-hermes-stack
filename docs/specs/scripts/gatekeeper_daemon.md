@@ -65,10 +65,19 @@ The daemon has no CLI arguments; every knob is an env var.
 | `BONSAI_MODEL`          | —                       | **Deprecated alias** for `GK_LLM_MODEL`                                            |
 
 `llama-services.sh` exports only `GK_LLM_URL`, `GK_LLM_MODEL`,
-`HERMES_HOME`, and `HONCHO_DIR`. All other `GK_*` values fall back to
-the daemon's defaults listed above. To override them in the normal
-lifecycle, either edit the script, wrap `start_gatekeeper`, or kill
-the daemon and relaunch it by hand with your env.
+`HERMES_HOME`, and `HONCHO_DIR`. Both `GK_LLM_URL` and `GK_LLM_MODEL`
+are read from `scripts/llama-services.conf` (they are no longer
+hardcoded in the shell script), which means `switch-endpoints.py` can
+keep them in sync with the Honcho chat endpoint automatically — and
+does, on every Axis A run. See
+[`switch-endpoints.md`](switch-endpoints.md) § "Gatekeeper follows
+chat engine" for the rationale and the hand-edit escape hatch.
+
+All other `GK_*` values (`GK_DELTA`, `GK_TAU`, polling / re-eval /
+batch / output-tokens) fall back to the daemon's defaults listed
+above. To override them in the normal lifecycle, either edit the
+script, wrap `start_gatekeeper`, or kill the daemon and relaunch it
+by hand with your env.
 
 ## Specs & assumptions
 
@@ -157,7 +166,13 @@ llama-server than on ollama.
   `GK_LLM_URL` / `GK_LLM_MODEL`. There's no other coupling — the prompt
   is frozen, the schema is frozen, and the daemon doesn't care what's
   behind the URL as long as it speaks OpenAI chat-completions with
-  logprobs.
+  logprobs. In practice these two keys are driven by
+  `switch-endpoints.py` to follow the Honcho chat engine (one source
+  of truth for the active engine). Hand-editing the conf keys is the
+  escape hatch when you want a dedicated small classifier — the
+  switcher will rewrite them on the next Axis A run, so either pin
+  the conf and avoid rerunning Axis A, or accept that the override
+  is a per-session override.
 - **Shadow evaluation.** The harness for running a candidate
   classifier against labelled queue snapshots lives under
   `scripts/gatekeeper_eval/`. Workflow: freeze a corpus, run the

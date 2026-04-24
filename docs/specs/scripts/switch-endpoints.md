@@ -82,14 +82,20 @@ Non-configurable constants worth knowing:
 
 | Axis | File                                                        | What is written                                                                     |
 | ---- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| A    | `honcho/config.toml` (9 chat `model_config` blocks)         | `model`, `overrides.base_url`                                                       |
+| A    | `honcho/config.toml` (9 chat `model_config` blocks)         | `model`, `overrides.base_url`; also co-writes `GK_LLM_URL` / `GK_LLM_MODEL` in `scripts/llama-services.conf` so the gatekeeper classifier follows the chat engine (see "Gatekeeper follows chat engine" below) |
 | B    | `honcho/config.toml` (`embedding.model_config`)             | `model`, `overrides.base_url`; dim/max-input caps co-moved (see below)              |
 | C    | `~/.hermes/config.yaml`                                     | `model.base_url`, `model.default`, plus `providers.<model.provider>.{api,default_model,models[]}` — all four are **force-synced** every run to prevent the display-vs-runtime bifurcation that Hermes v0.10 otherwise exhibits |
 | D    | `scripts/llama-services.conf`                               | `CHAT_HF_SPEC`, `CHAT_ALIAS`, `CHAT_CTX`, `CHAT_NGL`, `CHAT_IS_MOE`, `CHAT_REASONING_OFF`, `CHAT_PARALLEL` |
 
-Default flow: A + C + D. B is opt-in (`--with-embed`); justification is
-that swapping embed DIM without also migrating pgvector leaves the stack
-in a broken state, and this script does not touch the database.
+Default flow: A + C + D, plus a lightweight "move embed to the same
+engine?" offer (Y/n) whenever Axis A changes engine and Axis B would
+otherwise stay on the old one. That short-form prompt keeps the chat
+and embed engines in step without requiring the user to reason about
+dim/model ids. `--with-embed` still exists for the full Axis B picker
+(endpoint + model both chosen explicitly); justification for making
+that mode opt-in is unchanged — swapping embed DIM without also
+migrating pgvector leaves the stack in a broken state, and this script
+does not touch the database.
 
 ### Snapshot envelope
 
@@ -191,6 +197,46 @@ One side effect: the `models[]` list grows monotonically across runs
 as you try new models. Prune by hand in the YAML if it gets noisy; the
 runtime does not care.
 
+### Gatekeeper follows chat engine
+
+`scripts/gatekeeper_daemon.py` (fork-specific queue classifier) reads
+`GK_LLM_URL` / `GK_LLM_MODEL` from env, which `scripts/llama-services.sh`
+exports from its conf file. Whenever Axis A changes the Honcho chat
+endpoint, this script also rewrites those two conf keys to match — the
+classifier and the main chat path always share the same engine. The
+rewrite strips the trailing `/v1` because the daemon appends
+`/v1/chat/completions` itself.
+
+This couples three things to Axis A: Honcho chat, gatekeeper classifier,
+and (via `needs_llama_restart`) the `llama-services.sh restart` step.
+It is intentional — the alternative ("user picks gk separately") is a
+footgun in a single-host deployment because the classifier fails
+silently when the endpoint it points at is stopped.
+
+Operators who genuinely want a dedicated lightweight classifier on a
+separate URL/model can hand-edit `GK_LLM_URL` / `GK_LLM_MODEL` in
+`scripts/llama-services.conf`. The switcher will rewrite them on the
+next Axis A run, so that workflow requires either pinning a custom conf
+and never re-running Axis A, or automating the re-application after
+each run.
+
+### Embed engine-match offer (short form, default flow)
+
+When Axis A changes to a different engine (llama-server ↔ ollama) and
+the user did *not* pass `--with-embed`, the script offers a one-question
+"also move embed to the same engine?" prompt (default Yes). Accepting
+it maps the engine to the canonical 768-dim nomic-embed-text endpoint
+(`:8081` `openai/text-embedding-3-small` for llama-server, `:11434`
+`openai/text-embedding-3-small:latest` for ollama — both resolve to the
+same GGUF blob so no DIM change and no pgvector migration). Declining
+leaves the embed axis untouched; `--with-embed` is still the way to
+change model or dim explicitly.
+
+The side effect worth knowing: if the user accepts and also stops the
+llama-server chat (Axis A moved to ollama), the llama-server chat
+(`:8080`) becomes truly unused — see "Outlook" below for the VRAM
+reclaim workflow.
+
 ### ollama-specific pitfalls (warned on)
 
 1. **`OLLAMA_CONTEXT_LENGTH` silent truncation.** The script greps
@@ -251,6 +297,31 @@ Hermes so each instance gets its own filesystem, network, and
 llama-server siblings — see
 [`docs/specs/scripts/llama-services.md`](llama-services.md) for the same
 recommendation from the other side.
+
+### Engine consistency (as of this version)
+
+- The gatekeeper classifier now tracks the Honcho chat engine (ollama
+  or llama-server) automatically on every Axis A run — there is one
+  source of truth for "which engine is driving the stack."
+- If an operator genuinely wants a dedicated lightweight classifier on
+  a separate URL/model, they can hand-edit `GK_LLM_URL` / `GK_LLM_MODEL`
+  in `scripts/llama-services.conf`. That override survives until the
+  next Axis A run, at which point the switcher rewrites both keys back
+  in sync with the chat endpoint. This is an intentional trade: the
+  default is safe (no silent classifier breakage on engine switch) at
+  the cost of a small amount of churn for the minority workflow.
+- Once the embed engine-match offer brings Honcho embed to ollama (or
+  the user passes `--with-embed` and picks ollama manually), the local
+  llama-server chat on `:8080` has no caller left — gk has already
+  been re-pointed at ollama by Axis A, and neither Hermes nor Honcho
+  talk to `:8080`. Reclaim that VRAM with:
+  ```bash
+  ./scripts/llama-services.sh stop chat    # kills only :8080
+  ```
+  Embed and gk keep running. If you also moved embed to ollama, a
+  further `stop embed` frees the `:8081` VRAM. Per-target `start` /
+  `stop` / `restart` subcommands were added to `llama-services.sh` for
+  exactly this flow.
 
 Future work on the script itself is deliberately small:
 

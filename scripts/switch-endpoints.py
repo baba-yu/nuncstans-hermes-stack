@@ -225,7 +225,12 @@ class PlannedChanges:
         return bool(self.honcho_chat or self.honcho_embed or self.caps)
 
     def needs_llama_restart(self) -> bool:
-        return bool(self.llama_chat_params or self.llama_embed_params)
+        # honcho_chat also triggers a restart because the gatekeeper daemon
+        # (started by llama-services.sh) auto-syncs its classifier endpoint
+        # to the new chat URL via GK_LLM_URL / GK_LLM_MODEL in the conf.
+        return bool(
+            self.llama_chat_params or self.llama_embed_params or self.honcho_chat
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +733,46 @@ def update_honcho_toml(
 _LLAMA_KEYS: tuple[str, ...] = (
     "CHAT_HF_SPEC", "CHAT_ALIAS", "CHAT_CTX", "CHAT_NGL", "CHAT_IS_MOE",
     "CHAT_REASONING_OFF", "CHAT_PARALLEL", "EMBED_BLOB", "EMBED_ALIAS", "EMBED_NGL",
+    "GK_LLM_URL", "GK_LLM_MODEL",
 )
+
+
+def _gk_base_url(chat_base_url_host: str) -> str:
+    """Strip the trailing '/v1' that Honcho/Hermes base_urls carry — the
+    gatekeeper daemon appends '/v1/chat/completions' itself, so GK_LLM_URL
+    is the plain '<scheme>://<host>:<port>' root."""
+    u = chat_base_url_host.rstrip("/")
+    return u[:-3].rstrip("/") if u.endswith("/v1") else u
+
+
+def _engine_of_url(url: str) -> str:
+    """Classify an endpoint URL into 'llama-server' / 'ollama' / 'custom'.
+    Port-based: 8080 / 8081 => llama-server; OLLAMA_PORT_HINT (11434) => ollama.
+    """
+    try:
+        port = urlparse(normalize_base(url)).port or 0
+    except ValueError:
+        return "custom"
+    if port in (8080, 8081):
+        return "llama-server"
+    if port == OLLAMA_PORT_HINT:
+        return "ollama"
+    return "custom"
+
+
+def _embed_endpoint_for_engine(engine: str) -> tuple[str, str] | None:
+    """Canonical (host-form URL, 768-dim model id) for a given engine, or
+    None when the engine is custom/unknown. nomic-embed-text is the same
+    blob behind both aliases on ollama; we pick the openai/... name to
+    match the existing Honcho config value and minimize the TOML diff."""
+    if engine == "llama-server":
+        return ("http://localhost:8081/v1", "openai/text-embedding-3-small")
+    if engine == "ollama":
+        return (
+            f"http://localhost:{OLLAMA_PORT_HINT}/v1",
+            "openai/text-embedding-3-small:latest",
+        )
+    return None
 
 
 def _format_conf_value(key: str, value: str) -> str:
@@ -791,6 +835,15 @@ def update_llama_conf(
     if plan.llama_embed_params is not None:
         # Only alias is typically changed here; EMBED_BLOB requires manual spec.
         updates["EMBED_ALIAS"] = plan.llama_embed_params.alias
+
+    # Auto-sync the gatekeeper classifier to the Honcho chat endpoint so
+    # the gk daemon uses the same engine as the rest of the stack (one
+    # source of truth). Users who want a dedicated small classifier can
+    # hand-edit llama-services.conf — but the switcher will rewrite
+    # these keys on the next Axis A run.
+    if plan.honcho_chat is not None:
+        updates["GK_LLM_URL"] = _gk_base_url(plan.honcho_chat.base_url_host)
+        updates["GK_LLM_MODEL"] = plan.honcho_chat.model
 
     if not updates:
         return old_text, old_text
@@ -1357,13 +1410,47 @@ def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
 
         if with_embed:
             _pick_honcho_embed(plan, e_url, e_model, caps_now["embedding.VECTOR_DIMENSIONS"])
+        elif plan.honcho_chat and _engine_of_url(plan.honcho_chat.base_url_host) != _engine_of_url(e_url) \
+                and _engine_of_url(plan.honcho_chat.base_url_host) in ("llama-server", "ollama"):
+            # Lightweight "keep chat/embed engines in step" offer in the
+            # default flow: same engine as the new chat axis, same
+            # nomic-embed-text model (768 dim), no DB migration.
+            new_engine = _engine_of_url(plan.honcho_chat.base_url_host)
+            pair = _embed_endpoint_for_engine(new_engine)
+            if pair is not None:
+                new_url, new_model = pair
+                resp = questionary.confirm(
+                    f"also move Honcho embed to {new_engine} ({new_url}, "
+                    f"model {new_model}, still 768-dim nomic-embed-text)? "
+                    f"current: {e_model} @ {e_url}",
+                    default=True,
+                ).ask()
+                if resp is None:
+                    raise KeyboardInterrupt
+                if resp:
+                    plan.honcho_embed = EndpointChoice(
+                        base_url_host=new_url,
+                        base_url_docker=to_docker_url(new_url),
+                        model=new_model,
+                        meta=probe_model_meta(new_url, new_model),
+                    )
+                else:
+                    cprint(
+                        "info",
+                        f"embed axis left at {e_model} @ {e_url} "
+                        f"(use --with-embed for a full picker)",
+                    )
+            else:
+                cprint(
+                    "info",
+                    "embed axis skipped (pass --with-embed to include). "
+                    f"current: {e_model} @ {e_url}",
+                )
         else:
             cprint(
                 "info",
-                "skipping Honcho embed axis (pass --with-embed to include). "
-                "Current: {model} @ {url} (dim={dim})".format(
-                    model=e_model, url=e_url, dim=caps_now["embedding.VECTOR_DIMENSIONS"]
-                ),
+                "embed axis skipped (pass --with-embed to include). "
+                f"current: {e_model} @ {e_url}",
             )
         _pick_hermes(plan, h_url, h_model)
     except KeyboardInterrupt:

@@ -462,14 +462,13 @@ Easiest lasting fix: add `COMPOSE_PROJECT_NAME=honcho-gatekeeper` to `honcho/.en
 ## Running, stopping, restarting
 
 ```bash
-# llama-server processes (chat on :8080, embedding on :8081)
-./scripts/llama-services.sh start
-./scripts/llama-services.sh stop
-./scripts/llama-services.sh restart
+# llama-server processes (chat on :8080, embedding on :8081, gatekeeper daemon).
+# start / stop / restart accept an optional target: all (default) | chat | embed | gk.
+./scripts/llama-services.sh start          # all three
+./scripts/llama-services.sh stop chat      # e.g. reclaim :8080 VRAM after moving to ollama
+./scripts/llama-services.sh restart gk
 ./scripts/llama-services.sh status
-./scripts/llama-services.sh logs chat       # tail ~/.local/state/nuncstans-hermes-stack/chat-server.log
-./scripts/llama-services.sh logs embed      # tail ~/.local/state/nuncstans-hermes-stack/embed-server.log
-./scripts/llama-services.sh logs gk         # tail ~/.local/state/nuncstans-hermes-stack/gatekeeper.log
+./scripts/llama-services.sh logs chat      # tail one log: chat | embed | gk
 
 # Honcho (data survives in the named volumes)
 cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose down
@@ -483,13 +482,15 @@ cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose up -d
 ```bash
 ./scripts/switch-endpoints.py --dry-run           # preview diffs, no writes
 ./scripts/switch-endpoints.py                     # real run, 3 axes by default
-./scripts/switch-endpoints.py --with-embed        # also prompt for the embed axis (opt-in)
+./scripts/switch-endpoints.py --with-embed        # full picker on the embed axis (endpoint + model both)
 ./scripts/switch-endpoints.py --list-snapshots
 ./scripts/switch-endpoints.py --rollback
 ./scripts/switch-endpoints.py --restore <id>
 ```
 
-For the interactive flow, parameter derivation rules (`-c` / `-ngl` / MoE / reasoning / `--parallel`), snapshot layout + manifest schema, Honcho cap co-movement, the Hermes two-layer provider sync (which this script always performs to avoid the display-vs-runtime bifurcation in Hermes v0.10), and the ollama pitfalls the switcher warns about (`OLLAMA_CONTEXT_LENGTH` silent truncation, qwen3 `think` flag, tool-call stability), see [`docs/specs/scripts/switch-endpoints.md`](docs/specs/scripts/switch-endpoints.md).
+The default flow asks three axes (Honcho chat, Hermes, optional llama-server model). If Axis A changes engine (ollama ↔ llama-server), a single extra prompt offers to move Honcho embed to the matching engine's nomic-embed-text endpoint (same 768 dim, no DB migration). Changing the chat engine also auto-syncs the gatekeeper classifier (`GK_LLM_URL` / `GK_LLM_MODEL` in `scripts/llama-services.conf`) so the whole stack follows one engine.
+
+For parameter derivation rules (`-c` / `-ngl` / MoE / reasoning / `--parallel`), snapshot layout + manifest schema, Honcho cap co-movement, the Hermes two-layer provider sync (which this script always performs to avoid the display-vs-runtime bifurcation in Hermes v0.10), and the ollama pitfalls the switcher warns about (`OLLAMA_CONTEXT_LENGTH` silent truncation, qwen3 `think` flag, tool-call stability), see [`docs/specs/scripts/switch-endpoints.md`](docs/specs/scripts/switch-endpoints.md).
 
 Snapshots and logs live under `~/.local/state/nuncstans-hermes-stack/` by default; override with `HERMES_STATE_DIR` when running a second instance on the same host. Single-instance per host is the assumed operating mode — see the spec doc for the containerization outlook.
 
