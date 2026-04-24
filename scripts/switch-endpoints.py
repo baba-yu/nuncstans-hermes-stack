@@ -913,6 +913,22 @@ def _print_current_state() -> None:
           f"moe={'yes' if llama.is_moe else 'no'}  parallel={llama.parallel}")
     print(f"  caps         : app.GET_CONTEXT_MAX_TOKENS={caps['app.GET_CONTEXT_MAX_TOKENS']}, "
           f"dialectic.MAX_INPUT_TOKENS={caps['dialectic.MAX_INPUT_TOKENS']}")
+    # Startup drift heads-up: if Hermes already points somewhere different
+    # from Honcho chat, say so up front. This catches the case where a
+    # prior run left the two axes out of sync.
+    if (h_base, h_model) != (c_base, c_model):
+        # Normalize host.docker.internal vs localhost — they can resolve to
+        # the same place even though the strings differ.
+        h_norm = h_base.replace("localhost", "host.docker.internal").replace(
+            "127.0.0.1", "host.docker.internal"
+        )
+        if (h_norm, h_model) != (c_base, c_model):
+            cprint(
+                "warn",
+                f"Hermes and Honcho chat are out of sync "
+                f"(Hermes={h_model}@{h_base}, Honcho chat={c_model}@{c_base}). "
+                "Consider syncing them on the C axis below.",
+            )
 
 
 def _prompt_endpoint(
@@ -1095,7 +1111,9 @@ def _pick_honcho_embed(plan: PlannedChanges, current_url: str, current_model: st
 def _pick_hermes(plan: PlannedChanges, current_url: str, current_model: str) -> None:
     if plan.honcho_chat and plan.honcho_chat.model:
         default_to_honcho = questionary.confirm(
-            "C: Hermes — use the same endpoint/model as Honcho chat?", default=True
+            f"C: Hermes — use the same endpoint/model as Honcho chat? "
+            f"(current Hermes: {current_model} @ {current_url})",
+            default=True,
         ).ask()
         if default_to_honcho is None:
             raise KeyboardInterrupt
@@ -1109,6 +1127,21 @@ def _pick_hermes(plan: PlannedChanges, current_url: str, current_model: str) -> 
             return
     url_host, _ = _prompt_endpoint("C: Hermes", default_url=current_url)
     if not url_host:
+        # User picked "no change". If that leaves Hermes pointing somewhere
+        # different from the new Honcho chat (or from what it used to track),
+        # raise a visible warning — this is the drift that bit us when a
+        # prior run set Hermes to ollama/qwen3.5 and a later run changed the
+        # Honcho chat axis while leaving Hermes untouched.
+        if plan.honcho_chat:
+            new_chat_url = plan.honcho_chat.base_url_host
+            new_chat_model = plan.honcho_chat.model
+            if current_url != new_chat_url or current_model != new_chat_model:
+                plan.warnings.append(
+                    f"Hermes will keep pointing at {current_model} @ {current_url} "
+                    f"while Honcho chat moves to {new_chat_model} @ {new_chat_url}. "
+                    f"If this is unintended, re-run and pick 'same as Honcho chat' "
+                    f"or 'different URL' on the Hermes axis."
+                )
         return
     model = _pick_model(url_host, purpose="Hermes", default_model=current_model)
     plan.hermes = EndpointChoice(
@@ -1258,6 +1291,8 @@ def _diff_and_confirm(
             f"hermes: set model.base_url={plan.hermes.base_url_host} "
             f"model.default={plan.hermes.model}",
         )
+    else:
+        cprint("step", "hermes: unchanged")
     if plan.warnings:
         cprint("step", "warnings")
         for w in plan.warnings:
