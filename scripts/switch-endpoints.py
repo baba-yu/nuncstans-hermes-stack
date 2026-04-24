@@ -801,11 +801,15 @@ def update_llama_conf(
     return old_text, new_text
 
 
-def update_hermes_config(
-    plan: PlannedChanges, *, dry_run: bool, update_provider_list: bool = False
-) -> list[str]:
-    """Run hermes config set ... for base_url/default. Returns log lines. No-op if
-    hermes CLI is absent. Caller guarantees snapshot was taken first."""
+def update_hermes_config(plan: PlannedChanges, *, dry_run: bool) -> list[str]:
+    """Run hermes config set ... for base_url/default AND fully sync the
+    matching providers.<model.provider> entry (api, default_model, and
+    models[]). Hermes v0.10 uses the provider entry as the actual runtime
+    endpoint while it still reads model.* for header display — any
+    desync between the two layers causes a display-vs-runtime
+    bifurcation. Returns log lines. No-op if hermes CLI is absent.
+    Caller guarantees snapshot was taken first.
+    """
     log: list[str] = []
     if plan.hermes is None:
         return log
@@ -829,8 +833,15 @@ def update_hermes_config(
         if r.returncode != 0:
             raise FatalError(f"hermes config set failed: {r.stderr.strip() or r.stdout.strip()}")
 
-    # Optional provider-list update (ruamel-based so we preserve comments)
-    if update_provider_list and not dry_run:
+    # Force-sync the entire provider entry to match model.*. Without this
+    # the top-level model.* (display) and provider.* (runtime) can diverge
+    # when an earlier run set one but not the other, or when auto-rollback
+    # restored the YAML partially. The models[] append is not strictly
+    # runtime-load-bearing (api + default_model are what Hermes actually
+    # calls) but keeping it in step avoids a third kind of drift where
+    # `hermes model`'s picker does not know about the currently-active
+    # model.
+    if not dry_run:
         try:
             yaml = YAML(typ="rt")
             yaml.preserve_quotes = True
@@ -839,17 +850,26 @@ def update_hermes_config(
             providers = data.get("providers") or {}
             prov_name = (data.get("model") or {}).get("provider") or ""
             if prov_name and prov_name in providers:
-                providers[prov_name]["default_model"] = model
-                providers[prov_name]["api"] = base
+                changed: list[str] = []
+                if providers[prov_name].get("api") != base:
+                    providers[prov_name]["api"] = base
+                    changed.append("api")
+                if providers[prov_name].get("default_model") != model:
+                    providers[prov_name]["default_model"] = model
+                    changed.append("default_model")
                 models_list = providers[prov_name].get("models") or []
                 if model not in models_list:
                     models_list.insert(0, model)
                     providers[prov_name]["models"] = models_list
-                with HERMES_YAML.open("w", encoding="utf-8") as f:
-                    yaml.dump(data, f)
-                log.append(f"updated providers[{prov_name}] via ruamel")
+                    changed.append("models[+]")
+                if changed:
+                    with HERMES_YAML.open("w", encoding="utf-8") as f:
+                        yaml.dump(data, f)
+                    log.append(
+                        f"synced providers[{prov_name}].{{{','.join(changed)}}}"
+                    )
         except Exception as e:  # noqa: BLE001
-            cprint("warn", f"provider-list update failed: {e}")
+            cprint("warn", f"provider-sync failed: {e}")
 
     return log
 
@@ -1394,16 +1414,11 @@ def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
             update_llama_conf(plan, dry_run=False)
             cprint("ok", f"wrote {LLAMA_CONF}")
         if plan.hermes:
-            add_to_catalog = questionary.confirm(
-                "also add this model to the provider catalog? "
-                "(yes = it will also appear in `hermes model`'s picker)",
-                default=True,
-            ).ask()
-            update_hermes_config(
-                plan, dry_run=False, update_provider_list=bool(add_to_catalog)
+            update_hermes_config(plan, dry_run=False)
+            cprint(
+                "ok",
+                "updated hermes config via `hermes config set` + full provider sync",
             )
-            cprint("ok", "updated hermes config via `hermes config set`"
-                   + (" + provider catalog" if add_to_catalog else ""))
 
         # 2. restarts
         if plan.needs_llama_restart():

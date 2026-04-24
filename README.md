@@ -489,7 +489,7 @@ cd "$HOME/nuncstans-hermes-stack/honcho" && docker compose up -d
 ./scripts/switch-endpoints.py --restore <id>
 ```
 
-For the interactive flow, parameter derivation rules (`-c` / `-ngl` / MoE / reasoning / `--parallel`), snapshot layout + manifest schema, Honcho cap co-movement, and the ollama pitfalls the switcher warns about (`OLLAMA_CONTEXT_LENGTH` silent truncation, qwen3 `think` flag, tool-call stability), see [`docs/specs/scripts/switch-endpoints.md`](docs/specs/scripts/switch-endpoints.md).
+For the interactive flow, parameter derivation rules (`-c` / `-ngl` / MoE / reasoning / `--parallel`), snapshot layout + manifest schema, Honcho cap co-movement, the Hermes two-layer provider sync (which this script always performs to avoid the display-vs-runtime bifurcation in Hermes v0.10), and the ollama pitfalls the switcher warns about (`OLLAMA_CONTEXT_LENGTH` silent truncation, qwen3 `think` flag, tool-call stability), see [`docs/specs/scripts/switch-endpoints.md`](docs/specs/scripts/switch-endpoints.md).
 
 Snapshots and logs live under `~/.local/state/nuncstans-hermes-stack/` by default; override with `HERMES_STATE_DIR` when running a second instance on the same host. Single-instance per host is the assumed operating mode — see the spec doc for the containerization outlook.
 

@@ -84,7 +84,7 @@ Non-configurable constants worth knowing:
 | ---- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | A    | `honcho/config.toml` (9 chat `model_config` blocks)         | `model`, `overrides.base_url`                                                       |
 | B    | `honcho/config.toml` (`embedding.model_config`)             | `model`, `overrides.base_url`; dim/max-input caps co-moved (see below)              |
-| C    | `~/.hermes/config.yaml`                                     | `model.base_url`, `model.default`; optional provider-catalog update via ruamel     |
+| C    | `~/.hermes/config.yaml`                                     | `model.base_url`, `model.default`, plus `providers.<model.provider>.{api,default_model,models[]}` — all four are **force-synced** every run to prevent the display-vs-runtime bifurcation that Hermes v0.10 otherwise exhibits |
 | D    | `scripts/llama-services.conf`                               | `CHAT_HF_SPEC`, `CHAT_ALIAS`, `CHAT_CTX`, `CHAT_NGL`, `CHAT_IS_MOE`, `CHAT_REASONING_OFF`, `CHAT_PARALLEL` |
 
 Default flow: A + C + D. B is opt-in (`--with-embed`); justification is
@@ -157,6 +157,39 @@ are rewritten to `host.docker.internal` so the Honcho container can
 reach the host-side llama-server / ollama. For the Hermes YAML, the
 host form is preserved — `hermes` runs on the host, not in a container,
 so `host.docker.internal` there would break resolution.
+
+### Hermes provider sync (always on)
+
+Hermes v0.10 stores its LLM endpoint in two places:
+
+- Top level `model.{base_url,default}` — drives the session-start header
+  display
+- `providers.<model.provider>.{api,default_model,models[]}` — drives
+  the actual runtime request path (`api` is the URL hit,
+  `default_model` is the id sent, `models[]` is the `hermes model`
+  picker catalogue)
+
+If the two layers disagree, the session banner will show one model
+while inference actually runs against another — the split happens
+silently at session boot. Writing only `model.*` (e.g. via
+`hermes config set`) does not propagate to the provider entry.
+
+To prevent this the script **always** force-syncs all four fields in
+the provider entry whenever the Hermes axis is written. There is no
+opt-out — the split-layer behaviour is a correctness hazard, not a
+preference. Sync steps:
+
+1. `hermes config set model.base_url <URL>` and
+   `hermes config set model.default <MODEL>` — writes the display
+   fields.
+2. ruamel re-read of the YAML, then force-write of
+   `providers.<model.provider>.api = <URL>`,
+   `providers.<model.provider>.default_model = <MODEL>`, and
+   `models[].insert(0, <MODEL>)` if not already present (deduped).
+
+One side effect: the `models[]` list grows monotonically across runs
+as you try new models. Prune by hand in the YAML if it gets noisy; the
+runtime does not care.
 
 ### ollama-specific pitfalls (warned on)
 
