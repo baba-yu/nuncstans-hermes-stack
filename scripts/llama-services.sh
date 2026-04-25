@@ -36,6 +36,11 @@ CHAT_PARALLEL=2
 EMBED_BLOB="/usr/share/ollama/.ollama/models/blobs/sha256-970aa74c0a90ef7482477cf803618e776e173c007bf957f635f1015bfcfef0e6"
 EMBED_ALIAS="openai/text-embedding-3-small"
 EMBED_NGL=99
+# Gatekeeper classifier endpoint (chat-engine follower by default).
+# switch-endpoints.py keeps these in sync with the Honcho chat endpoint
+# so the classifier uses the same engine as the rest of the stack.
+GK_LLM_URL="http://localhost:8080"
+GK_LLM_MODEL="$CHAT_ALIAS"
 
 LLAMA_SERVICES_CONF="$ROOT/scripts/llama-services.conf"
 if [[ -f "$LLAMA_SERVICES_CONF" ]]; then
@@ -116,9 +121,9 @@ start_gatekeeper() {
         info "gatekeeper already running (pid $(cat "$GK_PID_FILE"))"
         return 0
     fi
-    info "starting gatekeeper daemon"
-    GK_LLM_URL=http://localhost:8080 \
-    GK_LLM_MODEL="$CHAT_ALIAS" \
+    info "starting gatekeeper daemon (classifier=$GK_LLM_URL model=$GK_LLM_MODEL)"
+    GK_LLM_URL="$GK_LLM_URL" \
+    GK_LLM_MODEL="$GK_LLM_MODEL" \
     HERMES_HOME="$ROOT" \
     HONCHO_DIR="$ROOT/honcho" \
     nohup python3 "$ROOT/scripts/gatekeeper_daemon.py" \
@@ -200,21 +205,39 @@ stop_one() {
 }
 
 cmd_start() {
-    # embedding first: honcho deriver may fire during hermes turn warmups,
-    # and the chat server start triggers embedding-model ensure elsewhere.
-    start_embed
-    start_chat
-    # gatekeeper last: it calls the chat server, so chat must be healthy
-    # before the daemon's first poll fires.
-    start_gatekeeper
+    local target="${1:-all}"
+    case "$target" in
+        all)
+            # embedding first: honcho deriver may fire during hermes turn warmups,
+            # and the chat server start triggers embedding-model ensure elsewhere.
+            start_embed
+            start_chat
+            # gatekeeper last: it calls the chat server, so chat must be healthy
+            # before the daemon's first poll fires.
+            start_gatekeeper
+            ;;
+        chat)   start_chat ;;
+        embed)  start_embed ;;
+        gk|gatekeeper) start_gatekeeper ;;
+        *) die "unknown start target: $target (all|chat|embed|gk)" ;;
+    esac
 }
 
 cmd_stop() {
-    # reverse order: stop the daemon first so it doesn't see a missing
-    # chat server mid-classification, then the servers themselves
-    stop_one "gatekeeper" "$GK_PID_FILE"
-    stop_one "chat server" "$CHAT_PID_FILE"
-    stop_one "embedding server" "$EMBED_PID_FILE"
+    local target="${1:-all}"
+    case "$target" in
+        all)
+            # reverse order: stop the daemon first so it doesn't see a missing
+            # chat server mid-classification, then the servers themselves
+            stop_one "gatekeeper" "$GK_PID_FILE"
+            stop_one "chat server" "$CHAT_PID_FILE"
+            stop_one "embedding server" "$EMBED_PID_FILE"
+            ;;
+        chat)   stop_one "chat server" "$CHAT_PID_FILE" ;;
+        embed)  stop_one "embedding server" "$EMBED_PID_FILE" ;;
+        gk|gatekeeper) stop_one "gatekeeper" "$GK_PID_FILE" ;;
+        *) die "unknown stop target: $target (all|chat|embed|gk)" ;;
+    esac
 }
 
 cmd_status() {
@@ -242,7 +265,7 @@ cmd_status() {
     fi
 }
 
-cmd_restart() { cmd_stop; cmd_start; }
+cmd_restart() { cmd_stop "$@"; cmd_start "$@"; }
 
 cmd_logs() {
     local which="${1:-chat}"
@@ -257,10 +280,15 @@ cmd_logs() {
 sub="${1:-status}"
 shift || true
 case "$sub" in
-    start)   cmd_start ;;
-    stop)    cmd_stop ;;
+    start)   cmd_start "$@" ;;
+    stop)    cmd_stop "$@" ;;
     status)  cmd_status ;;
-    restart) cmd_restart ;;
+    restart) cmd_restart "$@" ;;
     logs)    cmd_logs "$@" ;;
-    *) echo "usage: $0 {start|stop|status|restart|logs [chat|embed]}" >&2; exit 2 ;;
+    *)
+        echo "usage: $0 {start|stop|restart} [all|chat|embed|gk]" >&2
+        echo "       $0 status" >&2
+        echo "       $0 logs {chat|embed|gk}" >&2
+        exit 2
+        ;;
 esac

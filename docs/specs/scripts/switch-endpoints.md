@@ -48,9 +48,11 @@ that this script will not perform for you. Pass `--with-embed` when you
 know what you are doing.
 
 Inside the interactive flow each axis offers the same menu:
-`llama-server` / `ollama` / custom URL / keep current. The Honcho-chat
-axis also offers "change the llama-server model itself" which pivots into
-axis D (rewriting `llama-services.conf`).
+`llama-server` / `ollama` / custom URL / keep current. After the
+Honcho-chat axis picks `llama-server`, a follow-up confirm asks
+whether to also change the GGUF that llama-server loads — answering
+Yes pivots into Axis D (rewriting `llama-services.conf`); No keeps
+the currently configured spec and just points Honcho at it.
 
 ## Options & env vars
 
@@ -82,14 +84,20 @@ Non-configurable constants worth knowing:
 
 | Axis | File                                                        | What is written                                                                     |
 | ---- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| A    | `honcho/config.toml` (9 chat `model_config` blocks)         | `model`, `overrides.base_url`                                                       |
+| A    | `honcho/config.toml` (9 chat `model_config` blocks)         | `model`, `overrides.base_url`; also co-writes `GK_LLM_URL` / `GK_LLM_MODEL` in `scripts/llama-services.conf` so the gatekeeper classifier follows the chat engine (see "Gatekeeper follows chat engine" below) |
 | B    | `honcho/config.toml` (`embedding.model_config`)             | `model`, `overrides.base_url`; dim/max-input caps co-moved (see below)              |
 | C    | `~/.hermes/config.yaml`                                     | `model.base_url`, `model.default`, plus `providers.<model.provider>.{api,default_model,models[]}` — all four are **force-synced** every run to prevent the display-vs-runtime bifurcation that Hermes v0.10 otherwise exhibits |
 | D    | `scripts/llama-services.conf`                               | `CHAT_HF_SPEC`, `CHAT_ALIAS`, `CHAT_CTX`, `CHAT_NGL`, `CHAT_IS_MOE`, `CHAT_REASONING_OFF`, `CHAT_PARALLEL` |
 
-Default flow: A + C + D. B is opt-in (`--with-embed`); justification is
-that swapping embed DIM without also migrating pgvector leaves the stack
-in a broken state, and this script does not touch the database.
+Default flow: A + C + D, plus a lightweight "move embed to the same
+engine?" offer (Y/n) whenever Axis A changes engine and Axis B would
+otherwise stay on the old one. That short-form prompt keeps the chat
+and embed engines in step without requiring the user to reason about
+dim/model ids. `--with-embed` still exists for the full Axis B picker
+(endpoint + model both chosen explicitly); justification for making
+that mode opt-in is unchanged — swapping embed DIM without also
+migrating pgvector leaves the stack in a broken state, and this script
+does not touch the database.
 
 ### Snapshot envelope
 
@@ -107,16 +115,67 @@ in a broken state, and this script does not touch the database.
     "planned_restarts": ["docker compose ... api deriver", "scripts/llama-services.sh restart"],
     "status": "snapshot_only | applied | applied_with_errors | rolled_back",
     "errors": [],
-    "previous_snapshot": "<id or null>"
+    "previous_snapshot": "<id or null>",
+    "pre_lifecycle_running": ["chat", "gk"],
+    "lifecycle_attempted": [{"action": "stop", "target": "chat"}, ...],
+    "compose_attempted": false
   }
   ```
 - LRU: at startup, any snapshots beyond the 10 most recent are deleted.
 - Auto-rollback triggers: any `FatalError`, any `docker compose` non-zero
   exit, any `llama-services.sh restart` non-zero exit, or `KeyboardInterrupt`
   after writes have begun. Rollback is atomic per file (copy into a
-  sibling tmp, `os.replace` onto destination). Service restarts are **not**
-  re-invoked by the rollback — the manifest notes this and the operator is
-  told to re-run restarts by hand.
+  sibling tmp, `os.replace` onto destination).
+
+### Side-effect-aware rollback (added)
+
+File-only rollback was insufficient: a switcher run that successfully
+wrote new config and then failed during compose restart used to leave
+api/deriver in a half-recreated state with no caller, while the conf
+files were quietly restored. Now `auto_rollback`, after restoring
+files, also replays the side-effect actions that were attempted:
+
+- `pre_lifecycle_running` — captured at `create_snapshot` time by
+  inspecting `<state_dir>/{chat,embed,gk}.pid` (mirrors
+  `llama-services.sh:get_live_pid`). Tells the recovery step which
+  services were live before the run started.
+- `lifecycle_attempted` — appended to `manifest.json` **before** every
+  `llama_services_sub(action, target)` invocation in the lifecycle
+  phase. The "before, not after" ordering means a kill mid-call still
+  records the intent.
+- `compose_attempted` — set True before the first
+  `restart_honcho_compose` call. Same "before, not after" rule.
+
+Recovery rule (in `_post_rollback_lifecycle_recovery`):
+1. For each distinct `target` in `lifecycle_attempted`, run
+   `restart <target>` if the target is in `pre_lifecycle_running`,
+   otherwise `stop <target>`. (The goal is to bring services back to
+   their pre-run lifecycle state, with the now-restored conf.)
+2. If `compose_attempted` is True, replay the compose recreate so
+   `api` / `deriver` re-read the restored `config.toml`.
+3. Recovery actions are best-effort. A non-zero rc appends a
+   `recovery_<action>_<target>` line to `errors` but never raises;
+   `status` stays `rolled_back`. If recovery itself fails, an
+   additional "manual intervention required" error is appended so
+   the operator sees it on `--list-snapshots`.
+
+> **Note: why `restart` and not `start` for the "was running" branch.**
+> The forward-path action recorded in `lifecycle_attempted` could be any
+> of `start` / `stop` / `restart`, and at recovery time the target may
+> currently be either up or down depending on how far the forward path
+> got before the cancel / failure. `restart` is the only command that
+> reliably converges to "service is up AND has just re-read the
+> restored conf" regardless of current state — `start` is a no-op
+> when the service is already running, which would leave it serving
+> the new (now-discarded) config. The same holds in reverse for
+> `stop`: it is the only command that reliably leaves the service
+> down regardless of current state. Using these two as the canonical
+> recovery actions lets us treat every entry in `lifecycle_attempted`
+> uniformly and keeps the recovery code one short branch.
+
+Out of scope (deliberately not undone): ollama model unloads
+(re-load is lazy and cheap on next request), LLM tokens consumed,
+running Hermes process memory.
 
 ### Chat parameter derivation (axis D)
 
@@ -191,6 +250,46 @@ One side effect: the `models[]` list grows monotonically across runs
 as you try new models. Prune by hand in the YAML if it gets noisy; the
 runtime does not care.
 
+### Gatekeeper follows chat engine
+
+`scripts/gatekeeper_daemon.py` (fork-specific queue classifier) reads
+`GK_LLM_URL` / `GK_LLM_MODEL` from env, which `scripts/llama-services.sh`
+exports from its conf file. Whenever Axis A changes the Honcho chat
+endpoint, this script also rewrites those two conf keys to match — the
+classifier and the main chat path always share the same engine. The
+rewrite strips the trailing `/v1` because the daemon appends
+`/v1/chat/completions` itself.
+
+This couples three things to Axis A: Honcho chat, gatekeeper classifier,
+and (via `needs_llama_restart`) the `llama-services.sh restart` step.
+It is intentional — the alternative ("user picks gk separately") is a
+footgun in a single-host deployment because the classifier fails
+silently when the endpoint it points at is stopped.
+
+Operators who genuinely want a dedicated lightweight classifier on a
+separate URL/model can hand-edit `GK_LLM_URL` / `GK_LLM_MODEL` in
+`scripts/llama-services.conf`. The switcher will rewrite them on the
+next Axis A run, so that workflow requires either pinning a custom conf
+and never re-running Axis A, or automating the re-application after
+each run.
+
+### Embed engine-match offer (short form, default flow)
+
+When Axis A changes to a different engine (llama-server ↔ ollama) and
+the user did *not* pass `--with-embed`, the script offers a one-question
+"also move embed to the same engine?" prompt (default Yes). Accepting
+it maps the engine to the canonical 768-dim nomic-embed-text endpoint
+(`:8081` `openai/text-embedding-3-small` for llama-server, `:11434`
+`openai/text-embedding-3-small:latest` for ollama — both resolve to the
+same GGUF blob so no DIM change and no pgvector migration). Declining
+leaves the embed axis untouched; `--with-embed` is still the way to
+change model or dim explicitly.
+
+The side effect worth knowing: if the user accepts and also stops the
+llama-server chat (Axis A moved to ollama), the llama-server chat
+(`:8080`) becomes truly unused — see "Outlook" below for the VRAM
+reclaim workflow.
+
 ### ollama-specific pitfalls (warned on)
 
 1. **`OLLAMA_CONTEXT_LENGTH` silent truncation.** The script greps
@@ -214,6 +313,83 @@ current `embedding.VECTOR_DIMENSIONS`, the script aborts the embed axis
 only (leaves chat / hermes / llama axes intact) and prints a message
 telling the operator that a pgvector migration is required. It will not
 attempt the migration itself.
+
+### Axis D model picker: local GGUF enumeration
+
+Axis D (the follow-up "load a different GGUF on llama-server?" branch
+under Axis A) lists two local GGUF
+caches as pre-filled candidates so the user does not have to retype
+paths:
+
+- **Ollama blobs** — walks `/usr/share/ollama/.ollama/models/manifests/`,
+  reads each manifest's largest layer digest, and maps it to
+  `/usr/share/ollama/.ollama/models/blobs/sha256-<digest>`. Displayed
+  as `name:tag` (e.g. `qwen3.6:27b  [ollama, 17.4 GiB]`). The value
+  is the absolute blob path — `llama-services.sh` passes it to
+  llama-server as `-m <path>` (it branches on leading `/` to choose
+  `-m` vs `-hf`).
+- **HuggingFace hub cache** — globs
+  `~/.cache/huggingface/hub/models--*/snapshots/*/*.gguf`. Files
+  smaller than 0.5 GiB and projector GGUFs (`mmproj`, `projector`,
+  `vision-*`) are skipped so the picker is not cluttered with
+  non-chat tensors.
+
+Both are offered alongside two manual escape hatches:
+`<enter HF spec manually (repo:quant)>` and `<enter local GGUF path
+manually>`. The currently-running spec (from `llama-services.conf`'s
+`CHAT_HF_SPEC`) is pinned as the first choice and tagged
+`[currently running]`. Aliases default to the selected candidate's
+label (e.g. `qwen3.6:27b` for an ollama pick, `qwen3.6-35b-a3b` for
+an HF pick); `_derive_alias()` strips common quant suffixes
+(`-UD-Q4_K_XL`, `-Q4_K_M`, `-Q8_0`, ...) and the `-GGUF` repo suffix
+so the alias is LLM-compatible without manual cleanup.
+
+### Unreachable-endpoint manual-entry default
+
+When the endpoint picked for Axis A / B is the local llama-server
+(`:8080` chat or `:8081` embed) and the server is currently stopped,
+`/v1/models` fails with connection-refused and the picker falls back
+to `questionary.text` for manual model-id entry. The default value for
+that prompt used to be the *previous* axis model, which is almost
+certainly wrong (e.g. switching from `qwen3.5:9b@ollama` onto
+`llama-server:8080` would pre-fill `qwen3.5:9b`, not the alias the
+server will actually advertise). The switcher now reads
+`scripts/llama-services.conf` and defaults to `CHAT_ALIAS` /
+`EMBED_ALIAS` in that case — the same alias the server will expose
+once the subsequent lifecycle step (`start chat` / `start embed`)
+brings it up. For other endpoints (ollama, custom URLs) the previous
+axis model is still used as the default.
+
+### Container-visible config via bind mount
+
+Honcho's upstream Dockerfile bakes `honcho/config.toml` into
+`/app/config.toml` at image build time, so a switch-endpoints run
+that edits the host file silently does not reach the running `api` /
+`deriver` containers — `--force-recreate` reuses the baked image.
+Symptom: the switcher reports "all writes succeeded" but the deriver
+keeps calling the pre-bake endpoints and the dialectic path never
+sees the new model.
+
+`honcho/docker-compose.override.yml` solves this with a read-only
+bind mount on both services:
+
+```yaml
+services:
+  api:
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+  deriver:
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+```
+
+With the mount in place, a `--force-recreate` is enough to pick up
+config.toml changes — no image rebuild.
+
+`atomic_write` in this script writes with mode `0644` (not the
+tempfile-default 0600) so the container user can read the file. The
+default 0600 was historically permissive enough on the host but broke
+read access inside the container (UID mismatch).
 
 ### Compose restart
 
@@ -251,6 +427,58 @@ Hermes so each instance gets its own filesystem, network, and
 llama-server siblings — see
 [`docs/specs/scripts/llama-services.md`](llama-services.md) for the same
 recommendation from the other side.
+
+### Engine consistency (as of this version)
+
+- The gatekeeper classifier now tracks the Honcho chat engine (ollama
+  or llama-server) automatically on every Axis A run — there is one
+  source of truth for "which engine is driving the stack."
+- If an operator genuinely wants a dedicated lightweight classifier on
+  a separate URL/model, they can hand-edit `GK_LLM_URL` / `GK_LLM_MODEL`
+  in `scripts/llama-services.conf`. That override survives until the
+  next Axis A run, at which point the switcher rewrites both keys back
+  in sync with the chat endpoint. This is an intentional trade: the
+  default is safe (no silent classifier breakage on engine switch) at
+  the cost of a small amount of churn for the minority workflow.
+- The llama-services lifecycle is now per-service and scoped by the
+  axis changes (`_llama_lifecycle_plan` in the switcher):
+  - **chat llama-server** — restarted only when `llama_chat_params`
+    actually changed; started (idempotent) when Axis A moves chat
+    back onto llama-server; **stopped** when Axis A moves chat to
+    ollama (no caller left → VRAM reclaimed automatically).
+  - **embed llama-server** — same three cases keyed off Axis B /
+    `llama_embed_params`.
+  - **gk daemon** — restarted whenever `honcho_chat` changed
+    (`GK_LLM_URL` / `GK_LLM_MODEL` need to be re-read from the conf).
+  - **ollama model unload** — opt-in for the reverse direction. The
+    switcher knows which ollama models were in use before the switch
+    (across chat / embed / hermes axes) and are not in use after, and
+    will interactively ask whether to POST `/api/generate keep_alive=0`
+    for each of them. **Default is No** — keeping the user's
+    `OLLAMA_KEEP_ALIVE=-1` policy intact, preserving prompt/KV caches,
+    and avoiding the ~10-30s reload cost for a 30B-class model on a
+    quick switch-back. When VRAM reclaim genuinely matters (tight GPU
+    or long-term engine change), answer Yes at the prompt, or pass
+    `--unload-ollama` on the command line to skip the confirm. The
+    ollama systemd service is never touched either way — stopping the
+    whole service requires sudo and is out of scope. Manual unload
+    (for ad-hoc reclaim outside a switch) is one line:
+    ```bash
+    curl -sfS -X POST http://localhost:11434/api/generate \
+      -d '{"model":"<id>","keep_alive":0,"prompt":"","stream":false}'
+    # or: ollama stop <id>
+    ```
+  So a run that points chat (and optionally embed) at ollama stops
+  the corresponding llama-server processes without manual follow-up,
+  and a run that moves chat off ollama releases the ollama model's
+  VRAM without manual follow-up. The user still sees one confirmation
+  describing the full plan — e.g.
+  "stop {chat}; ollama unload {qwen3.6:27b}; restart {gk}" — before
+  anything executes.
+- If you preferred the old "always stop + start all three" behavior,
+  or you want to manually intervene, the per-target subcommands on
+  `llama-services.sh` (`start|stop|restart {all|chat|embed|gk}`) are
+  the lower-level primitive the switcher drives.
 
 Future work on the script itself is deliberately small:
 

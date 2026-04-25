@@ -63,9 +63,18 @@ HONCHO_COMPOSE = REPO_ROOT / "honcho" / "docker-compose.yml"
 HERMES_YAML = Path(os.environ.get("HERMES_YAML_OVERRIDE", Path.home() / ".hermes" / "config.yaml"))
 
 _DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "nuncstans-hermes-stack"
-SNAPSHOT_ROOT = Path(
-    os.environ.get("HERMES_STATE_DIR") or _DEFAULT_STATE_DIR
-) / "endpoint-snapshots"
+_STATE_DIR = Path(os.environ.get("HERMES_STATE_DIR") or _DEFAULT_STATE_DIR)
+SNAPSHOT_ROOT = _STATE_DIR / "endpoint-snapshots"
+# Mirror of llama-services.sh's LOG_DIR (same env override). PID files for
+# chat / embed / gatekeeper live here; we read them in
+# _snapshot_running_state to record which services were live at snapshot
+# time so auto_rollback can restore that lifecycle state.
+_LOG_DIR = _STATE_DIR
+_LIFECYCLE_PID_FILES: dict[str, Path] = {
+    "chat":  _LOG_DIR / "chat-server.pid",
+    "embed": _LOG_DIR / "embed-server.pid",
+    "gk":    _LOG_DIR / "gatekeeper.pid",
+}
 SNAPSHOT_KEEP = 10
 
 # The 9 chat model_config blocks inside honcho/config.toml.
@@ -96,6 +105,20 @@ USE_COLOR = sys.stdout.isatty()
 
 class FatalError(RuntimeError):
     """Unrecoverable error — main() catches and exits non-zero."""
+
+
+def _ask_or_cancel(q: Any) -> Any:
+    """Call questionary .ask() and convert the None sentinel (Ctrl-C / Ctrl-D
+    / EOF) into a KeyboardInterrupt so the caller's cancel-handling path
+    runs instead of silently treating None as "user accepted default".
+
+    Returns the non-None value unchanged. Meant for every prompt site where
+    cancellation must abort the flow, not coerce to a default.
+    """
+    v = q.ask()
+    if v is None:
+        raise KeyboardInterrupt
+    return v
 
 
 def _c(code: str, s: str) -> str:
@@ -146,6 +169,12 @@ def atomic_write(path: Path, content: str, *, dry_run: bool) -> None:
     if dry_run:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
+    # tempfile.mkstemp creates files with mode 0600 by default — that bit
+    # us hard when honcho/config.toml was bind-mounted into the api /
+    # deriver containers (they run as UID 100 'app'; 0600 means only the
+    # host owner UID 1000 can read, so the container got Permission
+    # denied and silently fell back to defaults). Force 0644 so
+    # containers running as arbitrary UIDs can still read the file.
     fd, tmp_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
     )
@@ -153,6 +182,7 @@ def atomic_write(path: Path, content: str, *, dry_run: bool) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
+        os.chmod(tmp, 0o644)
         os.replace(tmp, path)
     except Exception:
         with contextlib.suppress(FileNotFoundError):
@@ -225,7 +255,12 @@ class PlannedChanges:
         return bool(self.honcho_chat or self.honcho_embed or self.caps)
 
     def needs_llama_restart(self) -> bool:
-        return bool(self.llama_chat_params or self.llama_embed_params)
+        # honcho_chat also triggers a restart because the gatekeeper daemon
+        # (started by llama-services.sh) auto-syncs its classifier endpoint
+        # to the new chat URL via GK_LLM_URL / GK_LLM_MODEL in the conf.
+        return bool(
+            self.llama_chat_params or self.llama_embed_params or self.honcho_chat
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -551,6 +586,35 @@ def _snapshot_id() -> str:
     return f"{ts}.{os.getpid()}"
 
 
+def _snapshot_running_state() -> list[str]:
+    """Return the subset of ['chat','embed','gk'] that has a tracked,
+    live PID right now. Replicates llama-services.sh:get_live_pid: pid
+    file present + cat-able + kill -0 succeeds. Anything else (no file,
+    empty file, non-int, dead pid) is treated as 'not running'.
+
+    Used at create_snapshot() time to populate
+    manifest['pre_lifecycle_running'] so auto_rollback knows which
+    services to bring back up vs leave stopped after restoring files.
+    """
+    running: list[str] = []
+    for svc, pid_file in _LIFECYCLE_PID_FILES.items():
+        try:
+            if not pid_file.exists():
+                continue
+            raw = pid_file.read_text(encoding="utf-8").strip()
+            if not raw:
+                continue
+            pid = int(raw)
+        except (OSError, ValueError):
+            continue
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, PermissionError, OSError):
+            continue
+        running.append(svc)
+    return running
+
+
 def prune_snapshots(keep: int = SNAPSHOT_KEEP) -> int:
     """Remove oldest directories when count > keep. Returns delete count."""
     if not SNAPSHOT_ROOT.exists():
@@ -625,9 +689,47 @@ def create_snapshot(user_choices: dict[str, Any], planned_restarts: list[str]) -
         "status": "snapshot_only",
         "errors": [],
         "previous_snapshot": prev,
+        # Side-effect-aware rollback bookkeeping. See
+        # /tmp/rollback-scenarios.md for the contract.
+        "pre_lifecycle_running": _snapshot_running_state(),
+        "lifecycle_attempted": [],
+        "compose_attempted": False,
     }
     (snap_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return Snapshot(dir=snap_dir, manifest=manifest)
+
+
+def _write_manifest(snap: Snapshot) -> None:
+    """Atomic-ish manifest rewrite. We do not bother with a tmp+rename
+    here because the manifest is metadata and a torn write only affects
+    audit, not data correctness — the actual config files use the
+    full atomic_write path."""
+    (snap.dir / "manifest.json").write_text(
+        json.dumps(snap.manifest, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def _persist_lifecycle_attempt(snap: Snapshot, action: str, target: str) -> None:
+    """Record (action, target) into manifest['lifecycle_attempted'] BEFORE
+    the actual subprocess fires. Persisting pre-call means a SIGKILL or
+    Ctrl-C mid-call still leaves a recovery breadcrumb the next
+    invocation (or auto_rollback) can replay against.
+    """
+    snap.manifest.setdefault("lifecycle_attempted", []).append(
+        {"action": action, "target": target}
+    )
+    _write_manifest(snap)
+
+
+def _persist_compose_attempt(snap: Snapshot) -> None:
+    """Mark the manifest as having attempted a compose recreate. Same
+    'before the call' semantics as _persist_lifecycle_attempt: if the
+    user Ctrl-C's mid docker-compose, we still know to replay it after
+    file restore."""
+    if snap.manifest.get("compose_attempted"):
+        return
+    snap.manifest["compose_attempted"] = True
+    _write_manifest(snap)
 
 
 def finalize_snapshot(snap: Snapshot, status: str, errors: list[str] | None = None) -> None:
@@ -657,23 +759,114 @@ def restore_snapshot(snap: Snapshot, *, dry_run: bool = False) -> None:
         os.replace(tmp_name, dest)
 
 
-def auto_rollback(snap: Snapshot, reason: str, errors: list[str]) -> None:
+def _post_rollback_lifecycle_recovery(
+    snap: Snapshot, errors: list[str], *, dry_run: bool = False
+) -> None:
+    """After file restore, bring services back to their pre-snapshot
+    lifecycle state with the now-restored configs. Best-effort: each
+    failed step appends a 'recovery_*' entry to errors and an
+    additional 'manual intervention required' note, but never raises —
+    auto_rollback's caller has already escalated the original error.
+
+    Logic:
+      - For every distinct target in lifecycle_attempted:
+          if target was running pre-snapshot → restart it (load restored conf)
+          else                               → stop it  (it should not be up)
+      - If compose_attempted, replay restart_honcho_compose so api/deriver
+        re-read the restored config.toml.
+
+    Skipped entirely under dry_run=True (defensive — cmd_switch never
+    auto_rollbacks in dry-run today, but the test harness exercises
+    that branch).
+    """
+    if dry_run:
+        return
+
+    lifecycle_attempted = snap.manifest.get("lifecycle_attempted") or []
+    pre_running = set(snap.manifest.get("pre_lifecycle_running") or [])
+    compose_attempted = bool(snap.manifest.get("compose_attempted"))
+
+    # Distinct targets, preserving first-seen order (so the recovery log
+    # is deterministic when a target appears under multiple actions).
+    seen: set[str] = set()
+    targets: list[str] = []
+    for entry in lifecycle_attempted:
+        t = entry.get("target") if isinstance(entry, dict) else None
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        targets.append(t)
+
+    any_failure = False
+    for t in targets:
+        if t in pre_running:
+            action = "restart"
+        else:
+            action = "stop"
+        try:
+            r = llama_services_sub(action, t, dry_run=False)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"recovery_{action}_{t}_exception: {e!r}")
+            any_failure = True
+            continue
+        if r is not None and r.returncode != 0:
+            err_text = ((r.stderr or "") + (r.stdout or "")).strip()
+            errors.append(
+                f"recovery_{action}_{t} rc={r.returncode}: {err_text[:300]}"
+            )
+            any_failure = True
+
+    if compose_attempted:
+        try:
+            r = restart_honcho_compose(dry_run=False)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"recovery_compose_exception: {e!r}")
+            any_failure = True
+        else:
+            if r is not None and r.returncode != 0:
+                err_text = ((r.stderr or "") + (r.stdout or "")).strip()
+                errors.append(
+                    f"recovery_compose rc={r.returncode}: {err_text[:300]}"
+                )
+                any_failure = True
+
+    if any_failure:
+        errors.append(
+            "recovery incomplete — manual intervention required "
+            "(re-run scripts/llama-services.sh restart and "
+            "docker compose up -d --force-recreate api deriver)"
+        )
+
+
+def auto_rollback(
+    snap: Snapshot, reason: str, errors: list[str], *, dry_run: bool = False
+) -> None:
     cprint("err", f"auto-rollback: {reason}")
     try:
-        restore_snapshot(snap)
-        finalize_snapshot(snap, "rolled_back", errors + [f"trigger: {reason}"])
-        cprint("ok", f"files restored from snapshot {snap.id}")
-        cprint(
-            "info",
-            "you may need to manually re-run restarts (docker compose / llama-services.sh) "
-            "to pick up the restored files.",
-        )
+        restore_snapshot(snap, dry_run=dry_run)
     except Exception as e:  # noqa: BLE001
         finalize_snapshot(
             snap, "applied_with_errors",
             errors + [f"rollback failure: {e}", f"original trigger: {reason}"],
         )
         cprint("err", f"ROLLBACK FAILED: {e}. Snapshot at {snap.dir}")
+        return
+
+    cprint("ok", f"files restored from snapshot {snap.id}")
+
+    # Side-effect-aware recovery. Mutates `errors` in-place with
+    # recovery_* prefixed entries; status stays 'rolled_back' regardless
+    # of recovery success per the spec.
+    _post_rollback_lifecycle_recovery(snap, errors, dry_run=dry_run)
+
+    finalize_snapshot(snap, "rolled_back", errors + [f"trigger: {reason}"])
+    if not (snap.manifest.get("lifecycle_attempted") or
+            snap.manifest.get("compose_attempted")):
+        cprint(
+            "info",
+            "no side-effect attempts were recorded; nothing to replay. "
+            "The restored files are now the source of truth.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +921,119 @@ def update_honcho_toml(
 _LLAMA_KEYS: tuple[str, ...] = (
     "CHAT_HF_SPEC", "CHAT_ALIAS", "CHAT_CTX", "CHAT_NGL", "CHAT_IS_MOE",
     "CHAT_REASONING_OFF", "CHAT_PARALLEL", "EMBED_BLOB", "EMBED_ALIAS", "EMBED_NGL",
+    "GK_LLM_URL", "GK_LLM_MODEL",
 )
+
+
+def _gk_base_url(chat_base_url_host: str) -> str:
+    """Strip the trailing '/v1' that Honcho/Hermes base_urls carry — the
+    gatekeeper daemon appends '/v1/chat/completions' itself, so GK_LLM_URL
+    is the plain '<scheme>://<host>:<port>' root."""
+    u = chat_base_url_host.rstrip("/")
+    return u[:-3].rstrip("/") if u.endswith("/v1") else u
+
+
+def _engine_of_url(url: str) -> str:
+    """Classify an endpoint URL into 'llama-server' / 'ollama' / 'custom'.
+    Port-based: 8080 / 8081 => llama-server; OLLAMA_PORT_HINT (11434) => ollama.
+    """
+    try:
+        port = urlparse(normalize_base(url)).port or 0
+    except ValueError:
+        return "custom"
+    if port in (8080, 8081):
+        return "llama-server"
+    if port == OLLAMA_PORT_HINT:
+        return "ollama"
+    return "custom"
+
+
+def _embed_endpoint_for_engine(engine: str) -> tuple[str, str] | None:
+    """Canonical (host-form URL, 768-dim model id) for a given engine, or
+    None when the engine is custom/unknown. nomic-embed-text is the same
+    blob behind both aliases on ollama; we pick the openai/... name to
+    match the existing Honcho config value and minimize the TOML diff."""
+    if engine == "llama-server":
+        return ("http://localhost:8081/v1", "openai/text-embedding-3-small")
+    if engine == "ollama":
+        return (
+            f"http://localhost:{OLLAMA_PORT_HINT}/v1",
+            "openai/text-embedding-3-small:latest",
+        )
+    return None
+
+
+def _ollama_models_in_use(
+    chat_url: str, chat_model: str,
+    embed_url: str, embed_model: str,
+    hermes_url: str, hermes_model: str,
+) -> set[str]:
+    """Set of ollama-resident model ids currently in use across the three
+    consumer axes (Honcho chat, Honcho embed, Hermes). Axes pointed at
+    non-ollama engines contribute nothing."""
+    used: set[str] = set()
+    if _engine_of_url(chat_url) == "ollama":
+        used.add(chat_model)
+    if _engine_of_url(embed_url) == "ollama":
+        used.add(embed_model)
+    if _engine_of_url(hermes_url) == "ollama":
+        used.add(hermes_model)
+    return used
+
+
+def _ollama_unload_targets(
+    plan: PlannedChanges,
+    cur_chat: tuple[str, str],
+    cur_embed: tuple[str, str],
+    cur_hermes: tuple[str, str],
+) -> list[str]:
+    """Which ollama models were in use before the switch but will not be
+    after it? Those are candidates for POST /api/generate keep_alive=0
+    so ollama releases their VRAM without us needing to stop the systemd
+    service (which would require sudo and affect unrelated clients)."""
+    before = _ollama_models_in_use(*cur_chat, *cur_embed, *cur_hermes)
+
+    def resolve(
+        ep: EndpointChoice | None, fallback: tuple[str, str]
+    ) -> tuple[str, str]:
+        return (ep.base_url_host, ep.model) if ep is not None else fallback
+
+    new_chat = resolve(plan.honcho_chat, cur_chat)
+    new_embed = resolve(plan.honcho_embed, cur_embed)
+    new_hermes = resolve(plan.hermes, cur_hermes)
+    after = _ollama_models_in_use(*new_chat, *new_embed, *new_hermes)
+    return sorted(before - after)
+
+
+def ollama_unload_model(
+    model_id: str, *, base_host: str = "http://localhost:11434", dry_run: bool
+) -> bool:
+    """POST /api/generate with keep_alive=0 — ollama unloads the model
+    from VRAM and returns {done_reason:"unload"}. Returns True on success
+    (non-fatal: caller may log and continue if False)."""
+    url = f"{base_host.rstrip('/')}/api/generate"
+    cprint("step", f"ollama unload {model_id} via {url}")
+    if dry_run:
+        return True
+    try:
+        r = httpx.post(
+            url,
+            json={"model": model_id, "keep_alive": 0, "prompt": "", "stream": False},
+            timeout=15.0,
+        )
+        r.raise_for_status()
+        done_reason = r.json().get("done_reason", "")
+        if done_reason == "unload":
+            cprint("ok", f"ollama: {model_id} unloaded")
+            return True
+        cprint(
+            "warn",
+            f"ollama unload {model_id}: unexpected done_reason={done_reason!r}",
+        )
+        return False
+    except Exception as e:  # noqa: BLE001
+        cprint("warn", f"ollama unload {model_id} failed: {e}")
+        return False
 
 
 def _format_conf_value(key: str, value: str) -> str:
@@ -791,6 +1096,15 @@ def update_llama_conf(
     if plan.llama_embed_params is not None:
         # Only alias is typically changed here; EMBED_BLOB requires manual spec.
         updates["EMBED_ALIAS"] = plan.llama_embed_params.alias
+
+    # Auto-sync the gatekeeper classifier to the Honcho chat endpoint so
+    # the gk daemon uses the same engine as the rest of the stack (one
+    # source of truth). Users who want a dedicated small classifier can
+    # hand-edit llama-services.conf — but the switcher will rewrite
+    # these keys on the next Axis A run.
+    if plan.honcho_chat is not None:
+        updates["GK_LLM_URL"] = _gk_base_url(plan.honcho_chat.base_url_host)
+        updates["GK_LLM_MODEL"] = plan.honcho_chat.model
 
     if not updates:
         return old_text, old_text
@@ -899,11 +1213,68 @@ def restart_honcho_compose(*, dry_run: bool) -> subprocess.CompletedProcess[str]
 
 
 def restart_llama(*, dry_run: bool) -> subprocess.CompletedProcess[str] | None:
+    """Restart all llama-services (chat+embed+gk). Kept for backwards-compat
+    callers; cmd_switch now prefers the per-target helper below."""
     cmd = [str(LLAMA_RESTART_SH), "restart"]
     cprint("step", f"restart llama-services: {' '.join(cmd)}")
     if dry_run:
         return None
     return subprocess.run(cmd, check=False, capture_output=True, text=True)
+
+
+def llama_services_sub(
+    subcmd: str, target: str, *, dry_run: bool
+) -> subprocess.CompletedProcess[str] | None:
+    """Run `./scripts/llama-services.sh <subcmd> <target>` for one of
+    start / stop / restart against one of all / chat / embed / gk."""
+    cmd = [str(LLAMA_RESTART_SH), subcmd, target]
+    cprint("step", " ".join(cmd))
+    if dry_run:
+        return None
+    return subprocess.run(cmd, check=False, capture_output=True, text=True)
+
+
+def _llama_lifecycle_plan(plan: PlannedChanges) -> tuple[list[str], list[str], list[str]]:
+    """Decide per-service actions based on the planned axis changes.
+
+    Returns (start_targets, restart_targets, stop_targets). Rules:
+    - chat llama-server (:8080):
+        - llama_chat_params set          → restart chat (new model/flags to load)
+        - else honcho_chat → llama-server → start chat (idempotent, ensures up)
+        - else honcho_chat → ollama/other → stop chat (no caller left)
+    - embed llama-server (:8081):
+        - llama_embed_params set         → restart embed
+        - else honcho_embed → llama-server → start embed (idempotent)
+        - else honcho_embed → ollama/other → stop embed
+    - gk daemon:
+        - honcho_chat set                → restart gk (GK_LLM_URL/MODEL changed)
+    """
+    start: list[str] = []
+    restart: list[str] = []
+    stop: list[str] = []
+
+    if plan.llama_chat_params is not None:
+        restart.append("chat")
+    elif plan.honcho_chat is not None:
+        engine = _engine_of_url(plan.honcho_chat.base_url_host)
+        if engine == "llama-server":
+            start.append("chat")
+        else:
+            stop.append("chat")
+
+    if plan.llama_embed_params is not None:
+        restart.append("embed")
+    elif plan.honcho_embed is not None:
+        engine = _engine_of_url(plan.honcho_embed.base_url_host)
+        if engine == "llama-server":
+            start.append("embed")
+        else:
+            stop.append("embed")
+
+    if plan.honcho_chat is not None:
+        restart.append("gk")
+
+    return start, restart, stop
 
 
 # ---------------------------------------------------------------------------
@@ -952,14 +1323,18 @@ def _print_current_state() -> None:
 
 
 def _prompt_endpoint(
-    label: str, *, default_url: str, allow_llama_model_change: bool = False,
-    for_embed: bool = False,
-) -> tuple[str, bool]:
-    """Return (chosen_host_url, wants_llama_model_change). Empty chosen_host_url = skip.
+    label: str, *, default_url: str, for_embed: bool = False,
+) -> str:
+    """Return chosen_host_url. Empty string = skip.
 
     for_embed=True: offer the :8081 embed server instead of :8080 chat, since
     the chat server does not serve /embeddings and its n_embd reflects the
     chat model's hidden size rather than an embedding dim.
+
+    Whether to also change the GGUF loaded by llama-server is asked as a
+    follow-up confirm by the caller (see _pick_honcho_chat) — that
+    decision belongs nested under "I picked llama-server" rather than as
+    a sibling endpoint choice.
     """
     llama_port = 8081 if for_embed else 8080
     llama_url = f"http://localhost:{llama_port}/v1"
@@ -970,40 +1345,63 @@ def _prompt_endpoint(
         questionary.Choice("custom URL...", value="custom"),
         questionary.Choice(f"no change (keep {default_url or '<empty>'})", value="keep"),
     ]
-    if allow_llama_model_change:
-        choices.insert(
-            3,
-            questionary.Choice(
-                "change the llama-server model itself (rewrites llama-services.conf)",
-                value="llama_swap",
-            ),
-        )
     pick = questionary.select(f"{label} — target endpoint?", choices=choices).ask()
     if pick is None:
         raise KeyboardInterrupt
     if pick == "keep":
-        return (default_url or "", False)
+        return default_url or ""
     if pick == "ll":
-        return (llama_url, False)
+        return llama_url
     if pick == "ol":
-        return (f"http://localhost:{OLLAMA_PORT_HINT}/v1", False)
-    if pick == "llama_swap":
-        return ("http://localhost:8080/v1", True)
+        return f"http://localhost:{OLLAMA_PORT_HINT}/v1"
     # custom
     url = questionary.text(
         f"{label} — base URL (include /v1)", default=default_url or llama_url
     ).ask()
     if url is None:
         raise KeyboardInterrupt
-    return (normalize_base(url), False)
+    return normalize_base(url)
+
+
+def _llama_alias_default(base_url: str, *, embed_filter: bool) -> str | None:
+    """When the chosen endpoint is our local llama-server (:8080 chat or
+    :8081 embed), read scripts/llama-services.conf and return the alias
+    it serves. This gives a useful manual-input default when the server
+    is currently stopped (probe fails) but the user is switching
+    *toward* it — the lifecycle step will `start chat` / `start embed`
+    and the alias is what the server will advertise once up."""
+    try:
+        port = urlparse(normalize_base(base_url)).port or 0
+    except ValueError:
+        return None
+    try:
+        conf = read_llama_conf()
+    except Exception:  # noqa: BLE001
+        return None
+    if embed_filter and port == 8081:
+        return conf.get("EMBED_ALIAS")
+    if not embed_filter and port == 8080:
+        return conf.get("CHAT_ALIAS")
+    return None
 
 
 def _pick_model(base_url: str, *, purpose: str, default_model: str,
                 embed_filter: bool = False) -> str:
     models = probe_models(base_url)
     if not models:
-        cprint("warn", "could not list models; enter manually")
-        m = questionary.text(f"{purpose} — model id", default=default_model).ask()
+        alias = _llama_alias_default(base_url, embed_filter=embed_filter)
+        hint = default_model
+        if alias and alias != default_model:
+            cprint(
+                "info",
+                f"endpoint unreachable; using llama-services.conf alias "
+                f"'{alias}' as the default (the lifecycle step will start "
+                f"the server once you confirm)",
+            )
+            hint = alias
+        else:
+            cprint("warn", "could not list models; enter manually")
+        m = questionary.text(f"{purpose} — model id", default=hint).ask()
         if m is None:
             raise KeyboardInterrupt
         return m.strip()
@@ -1067,22 +1465,31 @@ def _warn_ollama_pitfalls(base_url: str, model: str, meta: ModelMeta | None) -> 
 
 
 def _pick_honcho_chat(plan: PlannedChanges, current_url: str, current_model: str) -> bool:
-    """Returns True if the user asked to change the llama-server model."""
-    url_host, swap_llama = _prompt_endpoint(
-        "A: Honcho chat", default_url=current_url, allow_llama_model_change=True
-    )
+    """Returns True if the user asked to change the llama-server GGUF
+    (which then triggers Axis D). Otherwise the standard model picker
+    runs against the chosen endpoint."""
+    url_host = _prompt_endpoint("A: Honcho chat", default_url=current_url)
     if not url_host:
         return False
-    if url_host == current_url and not swap_llama:
-        # still allow a no-op endpoint, but they may want to pick a different model
-        pass
+
+    # If the user picked the local llama-server, ask the natural
+    # follow-up: keep the GGUF that's loaded (or last configured), or
+    # swap to a different one? Yes branches into Axis D's picker below.
+    swap_llama = False
+    if _engine_of_url(url_host) == "llama-server":
+        swap_llama = bool(_ask_or_cancel(questionary.confirm(
+            "load a different GGUF on llama-server? (rewrites "
+            "scripts/llama-services.conf and restarts chat-server; default keeps "
+            "the currently configured spec)",
+            default=False,
+        )))
 
     if swap_llama:
-        # We'll do axis D later; mark chat endpoint as llama-server:8080 and defer model until we know alias
+        # Axis D will fill plan.honcho_chat.model with the picked alias.
         plan.honcho_chat = EndpointChoice(
             base_url_host=url_host,
             base_url_docker=to_docker_url(url_host),
-            model="",  # filled after D picks alias
+            model="",
             meta=None,
         )
         return True
@@ -1101,7 +1508,7 @@ def _pick_honcho_chat(plan: PlannedChanges, current_url: str, current_model: str
 
 def _pick_honcho_embed(plan: PlannedChanges, current_url: str, current_model: str,
                        current_dim: int) -> None:
-    url_host, _ = _prompt_endpoint("B: Honcho embed", default_url=current_url, for_embed=True)
+    url_host = _prompt_endpoint("B: Honcho embed", default_url=current_url, for_embed=True)
     if not url_host:
         return
     model = _pick_model(url_host, purpose="Honcho embed", default_model=current_model,
@@ -1145,7 +1552,7 @@ def _pick_hermes(plan: PlannedChanges, current_url: str, current_model: str) -> 
                 meta=plan.honcho_chat.meta,
             )
             return
-    url_host, _ = _prompt_endpoint("C: Hermes", default_url=current_url)
+    url_host = _prompt_endpoint("C: Hermes", default_url=current_url)
     if not url_host:
         # User picked "no change". If that leaves Hermes pointing somewhere
         # different from the new Honcho chat (or from what it used to track),
@@ -1172,26 +1579,179 @@ def _pick_hermes(plan: PlannedChanges, current_url: str, current_model: str) -> 
     )
 
 
-def _pick_llama_model(plan: PlannedChanges, current: ChatParams) -> None:
-    spec = questionary.text(
-        "D: llama-server — HF spec or local path (-hf / -m target)",
-        default=current.hf_spec,
-    ).ask()
-    if spec is None:
-        raise KeyboardInterrupt
-    spec = spec.strip()
+@dataclass(slots=True)
+class _LlamaCandidate:
+    spec: str          # what goes into CHAT_HF_SPEC (HF repo:quant or absolute /path)
+    label: str         # human-readable ("qwen3.6:27b" or "unsloth/Qwen3.6-35B-A3B-GGUF")
+    origin: str        # "ollama" | "hf-cache" | "current-conf"
+    size_gib: float
 
-    # Derive an alias: keep user's spec's short form; allow override.
-    default_alias = current.alias
-    if spec != current.hf_spec:
-        tail = spec.split("/")[-1].split(":")[0]
-        default_alias = tail.lower() if tail else current.alias
-    alias = questionary.text(
-        "D: alias advertised in /v1/models", default=default_alias
+
+_OLLAMA_MODELS_ROOT = Path("/usr/share/ollama/.ollama/models")
+_HF_HUB_ROOT = Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def _list_ollama_blobs() -> list[_LlamaCandidate]:
+    """Enumerate ollama-installed models via their manifests, resolve each to
+    the largest blob (the model tensor layer), and return candidates that
+    llama-server can load via `-m /abs/path`."""
+    results: list[_LlamaCandidate] = []
+    mf_root = _OLLAMA_MODELS_ROOT / "manifests"
+    if not mf_root.is_dir():
+        return results
+    for mf_path in mf_root.rglob("*"):
+        if not mf_path.is_file():
+            continue
+        try:
+            doc = json.loads(mf_path.read_text())
+        except (OSError, ValueError):
+            continue
+        layers = doc.get("layers") or []
+        if not layers:
+            continue
+        biggest = max(layers, key=lambda l: l.get("size", 0))
+        digest = (biggest.get("digest") or "").replace(":", "-")
+        if not digest:
+            continue
+        blob = _OLLAMA_MODELS_ROOT / "blobs" / digest
+        if not blob.exists():
+            continue
+        # manifest path shape: registry.ollama.ai/library/<name>/<tag>  or
+        #                     registry.ollama.ai/<user>/<name>/<tag>
+        rel = mf_path.relative_to(mf_root).parts
+        if len(rel) >= 2:
+            tag = rel[-1]
+            name = rel[-2]
+            label = f"{name}:{tag}"
+        else:
+            label = "/".join(rel)
+        size_gib = biggest.get("size", 0) / 1e9
+        results.append(_LlamaCandidate(str(blob), label, "ollama", size_gib))
+    return sorted(results, key=lambda c: c.label)
+
+
+def _list_hf_cached_ggufs(min_gib: float = 0.5) -> list[_LlamaCandidate]:
+    """Enumerate GGUF files already present in the HuggingFace hub cache
+    (usually downloaded by `llama-server -hf ...`). Skips small files
+    (e.g. mmproj projectors that are <0.5 GiB)."""
+    results: list[_LlamaCandidate] = []
+    if not _HF_HUB_ROOT.is_dir():
+        return results
+    # projector files (vision / multimodal side-tensors) and embed
+    # projectors are not chat-model GGUFs — filter them out so the
+    # picker is not noisy with irrelevant entries.
+    skip_patterns = ("mmproj", "projector", "vision-", "-vision")
+    for gguf in _HF_HUB_ROOT.rglob("*.gguf"):
+        try:
+            if not gguf.is_file():
+                continue
+            size_gib = gguf.stat().st_size / 1e9
+        except OSError:
+            continue
+        if size_gib < min_gib:
+            continue
+        name_lower = gguf.name.lower()
+        if any(pat in name_lower for pat in skip_patterns):
+            continue
+        try:
+            repo_dir = gguf.relative_to(_HF_HUB_ROOT).parts[0]
+        except (IndexError, ValueError):
+            continue
+        if not repo_dir.startswith("models--"):
+            continue
+        repo = "/".join(repo_dir.removeprefix("models--").split("--"))
+        label = f"{repo} ({gguf.name})"
+        results.append(_LlamaCandidate(str(gguf), label, "hf-cache", size_gib))
+    return sorted(results, key=lambda c: c.label)
+
+
+def _derive_alias(spec: str, fallback: str) -> str:
+    """Pick a reasonable advertise-alias from a spec (path or HF repo:quant)."""
+    if not spec:
+        return fallback
+    if spec.startswith("/"):
+        # local path: use the stem of the filename minus common quant suffixes
+        stem = Path(spec).stem
+        for suffix in ("-UD-Q4_K_XL", "-Q4_K_M", "-Q5_K_M", "-Q8_0", "-F16"):
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+                break
+        return stem.lower() or fallback
+    # HF repo:quant -> repo tail, strip "-GGUF"
+    tail = spec.split("/")[-1].split(":")[0]
+    if tail.endswith("-GGUF"):
+        tail = tail[:-5]
+    return tail.lower() if tail else fallback
+
+
+def _pick_llama_model(plan: PlannedChanges, current: ChatParams) -> None:
+    # Enumerate local candidates so the user can pick from ollama blobs or
+    # the HF cache without retyping the path. Always offer manual entry as
+    # escape hatches for not-yet-pulled HF specs or arbitrary paths.
+    candidates: list[_LlamaCandidate] = []
+    candidates.append(
+        _LlamaCandidate(current.hf_spec, f"{current.hf_spec}  [currently running]",
+                        "current-conf", 0.0)
+    )
+    candidates.extend(_list_ollama_blobs())
+    candidates.extend(_list_hf_cached_ggufs())
+
+    # dedupe by spec, keeping the first occurrence (current-conf wins)
+    seen: set[str] = set()
+    uniq: list[_LlamaCandidate] = []
+    for c in candidates:
+        if c.spec in seen:
+            continue
+        seen.add(c.spec)
+        uniq.append(c)
+    candidates = uniq
+
+    def _fmt(c: _LlamaCandidate) -> str:
+        if c.origin == "current-conf":
+            return c.label
+        return f"{c.label}  [{c.origin}, {c.size_gib:.1f} GiB]"
+
+    choices = [questionary.Choice(_fmt(c), value=c) for c in candidates]
+    choices.extend([
+        questionary.Choice("<enter HF spec manually (repo:quant)>", value="__hf__"),
+        questionary.Choice("<enter local GGUF path manually>", value="__path__"),
+    ])
+    pick = questionary.select(
+        "D: llama-server — which GGUF should chat-server load?",
+        choices=choices,
+        default=candidates[0] if candidates else None,
     ).ask()
-    if alias is None:
+    if pick is None:
         raise KeyboardInterrupt
-    alias = alias.strip()
+    if pick == "__hf__":
+        spec = _ask_or_cancel(questionary.text(
+            "HF spec (repo:quant)", default=current.hf_spec
+        )).strip()
+    elif pick == "__path__":
+        spec = _ask_or_cancel(questionary.text(
+            "local GGUF path (absolute)", default=current.hf_spec
+        )).strip()
+    else:
+        spec = pick.spec
+
+    if not spec:
+        raise FatalError("no spec provided; aborting Axis D")
+
+    # Derive an alias: prefer the label from the picked candidate (e.g.
+    # "qwen3.6:27b") so the /v1/models id matches ollama's conventional
+    # name; fall back to deriving from the spec string.
+    if pick not in ("__hf__", "__path__") and pick.origin != "current-conf":
+        default_alias = pick.label
+    else:
+        default_alias = (
+            current.alias if spec == current.hf_spec
+            else _derive_alias(spec, current.alias)
+        )
+    alias = _ask_or_cancel(questionary.text(
+        "D: alias advertised in /v1/models", default=default_alias
+    )).strip()
+    if not alias:
+        alias = default_alias
 
     # Try probing llama-server at its current endpoint to get meta — only useful if the user
     # just changed alias/spec but the server still holds the old model. Otherwise skip and ask.
@@ -1203,26 +1763,26 @@ def _pick_llama_model(plan: PlannedChanges, current: ChatParams) -> None:
     # We often cannot probe the *new* spec without first pulling it. Fall back to asking.
     if meta is None:
         cprint("info", "could not probe meta for the new spec — asking interactively.")
-        ctx = int(questionary.text(
+        ctx = int(_ask_or_cancel(questionary.text(
             "  -c context length", default=str(current.ctx),
             validate=lambda s: s.isdigit() or "must be a positive integer",
-        ).ask() or current.ctx)
-        ngl = int(questionary.text(
+        )) or current.ctx)
+        ngl = int(_ask_or_cancel(questionary.text(
             "  -ngl GPU layers (99 = all)", default=str(current.ngl),
             validate=lambda s: s.isdigit() or "must be a positive integer",
-        ).ask() or current.ngl)
-        is_moe = questionary.confirm(
+        )) or current.ngl)
+        is_moe = _ask_or_cancel(questionary.confirm(
             "  is this an MoE model (adds -ot 'ffn_(up|down|gate)_exps=CPU')?",
             default=current.is_moe,
-        ).ask()
-        reasoning_off = questionary.confirm(
+        ))
+        reasoning_off = _ask_or_cancel(questionary.confirm(
             "  qwen3-family (add --reasoning off)?", default=current.reasoning_off
-        ).ask()
-        parallel = int(questionary.text(
+        ))
+        parallel = int(_ask_or_cancel(questionary.text(
             "  --parallel (concurrent slots; 70B dense → 1 recommended)",
             default=str(current.parallel),
             validate=lambda s: s.isdigit() or "must be a positive integer",
-        ).ask() or current.parallel)
+        )) or current.parallel)
         plan.llama_chat_params = ChatParams(
             hf_spec=spec, alias=alias, ctx=ctx, ngl=ngl,
             is_moe=bool(is_moe), reasoning_off=bool(reasoning_off), parallel=parallel,
@@ -1235,17 +1795,20 @@ def _pick_llama_model(plan: PlannedChanges, current: ChatParams) -> None:
             f"moe={'yes' if proposed.is_moe else 'no'} "
             f"reasoning_off={proposed.reasoning_off} parallel={proposed.parallel}",
         )
-        accept = questionary.confirm("accept proposed values?", default=True).ask()
+        accept = _ask_or_cancel(questionary.confirm("accept proposed values?", default=True))
         if not accept:
-            ctx = int(questionary.text("  -c", default=str(proposed.ctx)).ask() or proposed.ctx)
-            ngl = int(questionary.text("  -ngl", default=str(proposed.ngl)).ask() or proposed.ngl)
-            is_moe = questionary.confirm("  MoE?", default=proposed.is_moe).ask()
-            reasoning_off = questionary.confirm(
+            ctx = int(_ask_or_cancel(questionary.text(
+                "  -c", default=str(proposed.ctx))) or proposed.ctx)
+            ngl = int(_ask_or_cancel(questionary.text(
+                "  -ngl", default=str(proposed.ngl))) or proposed.ngl)
+            is_moe = _ask_or_cancel(questionary.confirm(
+                "  MoE?", default=proposed.is_moe))
+            reasoning_off = _ask_or_cancel(questionary.confirm(
                 "  --reasoning off?", default=proposed.reasoning_off
-            ).ask()
-            parallel = int(questionary.text(
+            ))
+            parallel = int(_ask_or_cancel(questionary.text(
                 "  --parallel", default=str(proposed.parallel)
-            ).ask() or proposed.parallel)
+            )) or proposed.parallel)
             proposed = ChatParams(
                 hf_spec=spec, alias=alias, ctx=ctx, ngl=ngl,
                 is_moe=bool(is_moe), reasoning_off=bool(reasoning_off), parallel=parallel,
@@ -1338,7 +1901,9 @@ def _user_choice_summary(plan: PlannedChanges) -> dict[str, Any]:
     }
 
 
-def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
+def cmd_switch(
+    *, dry_run: bool, with_embed: bool = False, unload_ollama: bool = False
+) -> None:
     _print_current_state()
 
     doc = read_honcho_toml()
@@ -1357,13 +1922,47 @@ def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
 
         if with_embed:
             _pick_honcho_embed(plan, e_url, e_model, caps_now["embedding.VECTOR_DIMENSIONS"])
+        elif plan.honcho_chat and _engine_of_url(plan.honcho_chat.base_url_host) != _engine_of_url(e_url) \
+                and _engine_of_url(plan.honcho_chat.base_url_host) in ("llama-server", "ollama"):
+            # Lightweight "keep chat/embed engines in step" offer in the
+            # default flow: same engine as the new chat axis, same
+            # nomic-embed-text model (768 dim), no DB migration.
+            new_engine = _engine_of_url(plan.honcho_chat.base_url_host)
+            pair = _embed_endpoint_for_engine(new_engine)
+            if pair is not None:
+                new_url, new_model = pair
+                resp = questionary.confirm(
+                    f"also move Honcho embed to {new_engine} ({new_url}, "
+                    f"model {new_model}, still 768-dim nomic-embed-text)? "
+                    f"current: {e_model} @ {e_url}",
+                    default=True,
+                ).ask()
+                if resp is None:
+                    raise KeyboardInterrupt
+                if resp:
+                    plan.honcho_embed = EndpointChoice(
+                        base_url_host=new_url,
+                        base_url_docker=to_docker_url(new_url),
+                        model=new_model,
+                        meta=probe_model_meta(new_url, new_model),
+                    )
+                else:
+                    cprint(
+                        "info",
+                        f"embed axis left at {e_model} @ {e_url} "
+                        f"(use --with-embed for a full picker)",
+                    )
+            else:
+                cprint(
+                    "info",
+                    "embed axis skipped (pass --with-embed to include). "
+                    f"current: {e_model} @ {e_url}",
+                )
         else:
             cprint(
                 "info",
-                "skipping Honcho embed axis (pass --with-embed to include). "
-                "Current: {model} @ {url} (dim={dim})".format(
-                    model=e_model, url=e_url, dim=caps_now["embedding.VECTOR_DIMENSIONS"]
-                ),
+                "embed axis skipped (pass --with-embed to include). "
+                f"current: {e_model} @ {e_url}",
             )
         _pick_hermes(plan, h_url, h_model)
     except KeyboardInterrupt:
@@ -1388,6 +1987,11 @@ def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
         return
 
     confirm = questionary.confirm("apply these changes?", default=False).ask()
+    if confirm is None:
+        # Ctrl-C at the apply-confirm — no snapshot has been taken yet, so
+        # there is nothing to roll back; just propagate so the outer main()
+        # handler prints "interrupted" and exits 130.
+        raise KeyboardInterrupt
     if not confirm:
         cprint("warn", "aborted by user; no changes made")
         return
@@ -1420,27 +2024,124 @@ def cmd_switch(*, dry_run: bool, with_embed: bool = False) -> None:
                 "updated hermes config via `hermes config set` + full provider sync",
             )
 
-        # 2. restarts
-        if plan.needs_llama_restart():
-            do_restart = questionary.confirm(
-                "restart llama-services now?", default=True
+        # 2. restarts — per-service scope so we don't needlessly relaunch
+        # a llama-server that the new config no longer calls (e.g. chat
+        # moved to ollama leaves :8080 with no caller). Unused services
+        # get a 'stop' action instead of a 'restart'; still-needed ones
+        # get 'start' (idempotent) when params did not change, or
+        # 'restart' when they did. Also unload any ollama model that
+        # was in use before the switch but is not any more, so VRAM is
+        # released without having to stop the systemd ollama service.
+        start_targets, restart_targets, stop_targets = _llama_lifecycle_plan(plan)
+
+        # Ollama unload is opt-in (default off) — overriding the user's
+        # OLLAMA_KEEP_ALIVE policy without asking was too aggressive:
+        # unloading drops prompt/KV caches, a 30B-class model reload
+        # from disk costs ~10-30s, and shared-ollama setups would lose
+        # state for other clients. Ask explicitly unless --unload-ollama
+        # was passed.
+        unload_candidates = _ollama_unload_targets(
+            plan, (c_url, c_model), (e_url, e_model), (h_url, h_model)
+        )
+        if not unload_candidates:
+            unload_models: list[str] = []
+        elif unload_ollama:
+            unload_models = unload_candidates
+            cprint(
+                "info",
+                f"--unload-ollama: will unload {', '.join(unload_candidates)}",
+            )
+        else:
+            resp = questionary.confirm(
+                f"refresh VRAM by unloading {len(unload_candidates)} ollama model(s) "
+                f"({', '.join(unload_candidates)})? "
+                f"Note: drops prompt/KV caches; 30B-class reload from disk costs "
+                f"~10-30s; overrides your OLLAMA_KEEP_ALIVE setting. "
+                f"Leave as N to keep models warm; manual unload is "
+                f"`curl -X POST http://localhost:11434/api/generate "
+                f"-d '{{\"model\":\"<id>\",\"keep_alive\":0,\"prompt\":\"\",\"stream\":false}}'`.",
+                default=False,
             ).ask()
-            if do_restart:
-                r = restart_llama(dry_run=False)
-                if r is not None and r.returncode != 0:
-                    err_text = (r.stderr or r.stdout).strip()
-                    cprint("err", f"llama-services rc={r.returncode}:")
-                    for line in err_text.splitlines()[-20:]:
-                        sys.stderr.write(f"    {line}\n")
-                    errors.append(
-                        f"llama-services restart rc={r.returncode}: {err_text[:500]}"
-                    )
-                    raise FatalError("llama-services restart failed")
+            if resp is None:
+                raise KeyboardInterrupt
+            unload_models = unload_candidates if resp else []
+            if not resp:
+                cprint(
+                    "info",
+                    f"keeping ollama models warm: {', '.join(unload_candidates)}",
+                )
+        if start_targets or restart_targets or stop_targets or unload_models:
+            scope_msg_parts: list[str] = []
+            if stop_targets:
+                scope_msg_parts.append(f"stop {{{','.join(stop_targets)}}} (no longer in use)")
+            if unload_models:
+                scope_msg_parts.append(
+                    f"ollama unload {{{','.join(unload_models)}}} (VRAM reclaim)"
+                )
+            if restart_targets:
+                scope_msg_parts.append(f"restart {{{','.join(restart_targets)}}}")
+            if start_targets:
+                scope_msg_parts.append(f"start {{{','.join(start_targets)}}} (idempotent)")
+            do_lifecycle = questionary.confirm(
+                "apply llama-services lifecycle: " + "; ".join(scope_msg_parts) + "?",
+                default=True,
+            ).ask()
+            if do_lifecycle is None:
+                # Post-snapshot cancel: let the outer handler auto-rollback
+                # the writes we already committed rather than silently
+                # skipping the lifecycle (which would leave files rewritten
+                # but services unreachable).
+                raise KeyboardInterrupt
+            if do_lifecycle:
+                # Stops + unloads first so VRAM is released before any
+                # 'start' / 'restart' tries to bind the same GPU arena.
+                for t in stop_targets:
+                    _persist_lifecycle_attempt(snap, "stop", t)
+                    r = llama_services_sub("stop", t, dry_run=False)
+                    if r is not None and r.returncode != 0:
+                        err_text = (r.stderr or r.stdout).strip()
+                        cprint("warn", f"stop {t} rc={r.returncode}: {err_text[:200]}")
+                        # non-fatal: if stop fails we still proceed, but record it
+                        errors.append(
+                            f"llama-services stop {t} rc={r.returncode}: {err_text[:300]}"
+                        )
+                for model_id in unload_models:
+                    ok = ollama_unload_model(model_id, dry_run=False)
+                    if not ok:
+                        errors.append(f"ollama unload {model_id}: non-OK (see warn above)")
+                for t in restart_targets:
+                    _persist_lifecycle_attempt(snap, "restart", t)
+                    r = llama_services_sub("restart", t, dry_run=False)
+                    if r is not None and r.returncode != 0:
+                        err_text = (r.stderr or r.stdout).strip()
+                        cprint("err", f"restart {t} rc={r.returncode}:")
+                        for line in err_text.splitlines()[-20:]:
+                            sys.stderr.write(f"    {line}\n")
+                        errors.append(
+                            f"llama-services restart {t} rc={r.returncode}: {err_text[:500]}"
+                        )
+                        raise FatalError(f"llama-services restart {t} failed")
+                for t in start_targets:
+                    _persist_lifecycle_attempt(snap, "start", t)
+                    r = llama_services_sub("start", t, dry_run=False)
+                    if r is not None and r.returncode != 0:
+                        err_text = (r.stderr or r.stdout).strip()
+                        cprint("err", f"start {t} rc={r.returncode}:")
+                        for line in err_text.splitlines()[-20:]:
+                            sys.stderr.write(f"    {line}\n")
+                        errors.append(
+                            f"llama-services start {t} rc={r.returncode}: {err_text[:500]}"
+                        )
+                        raise FatalError(f"llama-services start {t} failed")
         if plan.needs_honcho_restart():
             do_restart = questionary.confirm(
                 "restart Honcho compose (api + deriver) now?", default=True
             ).ask()
+            if do_restart is None:
+                # Post-snapshot cancel → auto-rollback via outer handler.
+                raise KeyboardInterrupt
             if do_restart:
+                _persist_compose_attempt(snap)
                 r = restart_honcho_compose(dry_run=False)
                 if r is not None and r.returncode != 0:
                     err_text = (r.stderr or r.stdout).strip()
@@ -1539,6 +2240,11 @@ def main() -> None:
                     help="also prompt for the Honcho embedding axis (default: skipped — "
                          "changing embed dim requires a destructive pgvector migration, "
                          "so it is opt-in)")
+    ap.add_argument("--unload-ollama", action="store_true",
+                    help="force-unload ollama models whose axes moved off ollama "
+                         "(skips the interactive prompt). Default is to ask "
+                         "(default No) so your OLLAMA_KEEP_ALIVE setting and any "
+                         "warm prompt/KV caches are preserved.")
     ap.add_argument("--rollback", action="store_true",
                     help="restore from the most recent snapshot")
     ap.add_argument("--restore", metavar="SNAPSHOT_ID",
@@ -1563,7 +2269,11 @@ def main() -> None:
         elif args.restore:
             cmd_restore(args.restore)
         else:
-            cmd_switch(dry_run=args.dry_run, with_embed=args.with_embed)
+            cmd_switch(
+                dry_run=args.dry_run,
+                with_embed=args.with_embed,
+                unload_ollama=args.unload_ollama,
+            )
     except FatalError as e:
         cprint("err", str(e))
         sys.exit(2)

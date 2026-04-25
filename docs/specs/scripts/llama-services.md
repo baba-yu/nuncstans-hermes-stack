@@ -22,28 +22,34 @@ writer for that file. This script reads it on every start.
 ## Usage
 
 ```bash
-# Start everything (idempotent — skips what is already up).
-./scripts/llama-services.sh start
+# Start / stop / restart everything — optional target picks a single service.
+./scripts/llama-services.sh start          # all = embed + chat + gk
+./scripts/llama-services.sh start embed    # only the embedding server
+./scripts/llama-services.sh start chat     # only the chat server
+./scripts/llama-services.sh start gk       # only the gatekeeper daemon
 
-# Stop everything (reverse order: gk → chat → embed).
-./scripts/llama-services.sh stop
+./scripts/llama-services.sh stop           # reverse order: gk → chat → embed
+./scripts/llama-services.sh stop chat      # stop one (useful for VRAM reclaim
+                                           # when chat is no longer in use)
 
-# Stop then start.
-./scripts/llama-services.sh restart
+./scripts/llama-services.sh restart        # stop all + start all
+./scripts/llama-services.sh restart gk     # restart one
 
-# Report pid / port / health for chat, embed, and gk.
-./scripts/llama-services.sh status
+./scripts/llama-services.sh status         # pid / port / health per service
 
-# Tail one service's log. Targets: chat | embed | gk
-./scripts/llama-services.sh logs chat
-./scripts/llama-services.sh logs embed
-./scripts/llama-services.sh logs gk
+./scripts/llama-services.sh logs chat      # tail one log. Targets: chat | embed | gk
 ```
 
 All subcommands are idempotent; `start` checks the tracked pid file and
 the port before launching. If a port is bound but no tracked pid exists,
 the script refuses to start that service (rather than killing a possibly
 unrelated process) and tells the operator to investigate.
+
+The per-target variants are specifically there so operators can reclaim
+VRAM after a `switch-endpoints` run has moved Honcho chat (and
+transitively the gatekeeper) off llama-server onto ollama — at that
+point `./scripts/llama-services.sh stop chat` frees the `:8080` VRAM
+without touching the embedding server or the daemon.
 
 Typical first-time start:
 
@@ -71,8 +77,8 @@ on launch:
 
 | Exported to gatekeeper | Source                                    |
 | ---------------------- | ----------------------------------------- |
-| `GK_LLM_URL`           | hardcoded `http://localhost:8080`         |
-| `GK_LLM_MODEL`         | `$CHAT_ALIAS` from the conf               |
+| `GK_LLM_URL`           | `$GK_LLM_URL` from the conf (default `http://localhost:8080`; kept in sync with the Honcho chat endpoint by `switch-endpoints.py` on every Axis A run) |
+| `GK_LLM_MODEL`         | `$GK_LLM_MODEL` from the conf (default `$CHAT_ALIAS`; also kept in sync by the switcher) |
 | `HERMES_HOME`          | repo root (resolved from the script path) |
 | `HONCHO_DIR`           | `$HERMES_HOME/honcho`                     |
 
@@ -105,6 +111,8 @@ not inline comments after values.
 | `EMBED_BLOB`          | `/usr/share/ollama/.ollama/models/blobs/sha256-970aa74c…`                       | `-m` path to the embedding GGUF                                                  |
 | `EMBED_ALIAS`         | `openai/text-embedding-3-small`                                                 | `--alias`; do not change unless also updating Honcho's embedding code path       |
 | `EMBED_NGL`           | `99`                                                                            | `-ngl` for the embedding server                                                  |
+| `GK_LLM_URL`          | `http://localhost:8080`                                                         | Base URL (no `/v1`) the gatekeeper daemon sends classifier requests to; `switch-endpoints.py` Axis A keeps this in step with the Honcho chat endpoint automatically |
+| `GK_LLM_MODEL`        | `qwen3.6-test`                                                                  | Model id sent in the classifier request; also auto-synced by the switcher       |
 
 Non-configurable flags also passed to the chat server:
 `-fa on -ctk q8_0 -ctv q8_0 --jinja`. Change these by editing the
@@ -219,3 +227,20 @@ Do not bolt process-supervisor logic onto this script. Its job is the
 single-instance happy path: start three things, stop three things, tail
 one log. Anything beyond that belongs one level up (systemd, docker
 compose, k8s, whatever).
+
+### Engine consistency (as of this version)
+
+- The gatekeeper classifier is now tied to the Honcho chat engine
+  (ollama or llama-server) through `GK_LLM_URL` / `GK_LLM_MODEL` in the
+  conf. `switch-endpoints.py` rewrites both keys on every Axis A run —
+  one source of truth, no silent classifier breakage on engine switch.
+- Operators who want a dedicated lightweight classifier on a separate
+  URL/model can hand-edit the two `GK_*` keys in `llama-services.conf`.
+  That override survives until the next Axis A run; after that the
+  switcher puts them back in sync with the chat endpoint.
+- After `switch-endpoints.py` moves Honcho chat and (via the embed
+  engine-match offer) Honcho embed to ollama, the llama-server chat on
+  `:8080` has no caller. Reclaim the VRAM with
+  `./scripts/llama-services.sh stop chat`; embed and gk keep running.
+  The per-target subcommands (`start`/`stop`/`restart {chat|embed|gk}`)
+  exist specifically for this flow.
