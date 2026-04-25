@@ -72,6 +72,12 @@ get_live_pid() {
     local pid
     pid="$(cat "$pidfile" 2>/dev/null || true)"
     [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && echo "$pid"
+    # The && chain above returns non-zero when the pid is dead. Under
+    # `set -euo pipefail` that propagates through `pid="$(get_live_pid …)"`
+    # and silently kills the script before stop_one / start_chat can
+    # handle the empty-pid case. Force a clean rc=0 here so the caller
+    # always reaches its own logic.
+    return 0
 }
 
 port_open() {

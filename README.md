@@ -236,13 +236,13 @@ This is the GGUF that ollama originally pulled for `nomic-embed-text` in the leg
 - **Option A (one-off ollama use):** install ollama once (`curl -fsSL https://ollama.com/install.sh | sh`), run `ollama pull nomic-embed-text`, and the blob will live at the path above. You can stop / mask the ollama service afterwards — hermes-stack never calls ollama at runtime.
 - **Option B (skip ollama entirely):** download the nomic-embed-text GGUF from HuggingFace into `$HOME/nuncstans-hermes-stack/models/` and edit `EMBED_BLOB` in `scripts/llama-services.sh` to point at your file.
 
-### Step 3. Start the two `llama-server` processes
+### Step 3. Start the llama-server processes and gatekeeper
 
-`scripts/llama-services.sh` manages both servers idempotently — same command brings them up if they're down, is a no-op if they're up:
+`scripts/llama-services.sh` manages three things idempotently: chat llama-server (`:8080`), embedding llama-server (`:8081`), and the `gatekeeper_daemon.py` classifier. Same command brings them up if they're down, is a no-op if they're up:
 
 ```bash
 cd "$HOME/nuncstans-hermes-stack"
-./scripts/llama-services.sh start
+./scripts/llama-services.sh start           # all three; or: start {chat|embed|gk} for one
 ./scripts/llama-services.sh status
 ```
 
@@ -251,6 +251,7 @@ Expected `status` output (when healthy):
 ```
   chat   pid 12345  port 8080  healthy  log ~/.local/state/nuncstans-hermes-stack/chat-server.log
   embed  pid 12346  port 8081  healthy  log ~/.local/state/nuncstans-hermes-stack/embed-server.log
+  gk     pid 12347  daemon    running   log ~/.local/state/nuncstans-hermes-stack/gatekeeper.log
 ```
 
 The actual `llama-server` invocation is built from `scripts/llama-services.conf`; the shell script only glues in MoE/reasoning flags conditionally. For the per-flag rationale (`-ot` MoE offload, `--reasoning off` for qwen3, KV partitioning across `--parallel` slots, etc.) see [`docs/specs/scripts/llama-services.md`](docs/specs/scripts/llama-services.md).

@@ -28,6 +28,9 @@ failure.
 # Include the embed axis as well (destructive: DIM change forces pgvector migration)
 ./scripts/switch-endpoints.py --with-embed
 
+# Force-unload any ollama models that moved off this stack's axes (skip the interactive confirm)
+./scripts/switch-endpoints.py --unload-ollama
+
 # Compute diffs, print them, do not write or restart anything
 ./scripts/switch-endpoints.py --dry-run
 
@@ -60,6 +63,7 @@ the currently configured spec and just points Honcho at it.
 | ------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | `--dry-run`                     | off                                                                | Compute diffs, print them, write nothing, restart nothing, no snapshot taken               |
 | `--with-embed`                  | off                                                                | Include axis B (Honcho embed). DIM mismatch aborts this axis only, leaves others unchanged |
+| `--unload-ollama`               | off                                                                | Skip the "refresh VRAM?" confirm and force-unload any ollama model that has no axis pointing at it after the switch. Default is to ask (default No) so `OLLAMA_KEEP_ALIVE` and warm KV caches stay intact |
 | `--rollback`                    | —                                                                  | Restore from the most recent snapshot                                                      |
 | `--restore <id>`                | —                                                                  | Restore from a specific snapshot id (see `--list-snapshots`)                               |
 | `--list-snapshots`              | —                                                                  | List the 10 most recent snapshots with their manifest summaries                            |
@@ -127,7 +131,7 @@ does not touch the database.
   after writes have begun. Rollback is atomic per file (copy into a
   sibling tmp, `os.replace` onto destination).
 
-### Side-effect-aware rollback (added)
+### Side-effect-aware rollback
 
 File-only rollback was insufficient: a switcher run that successfully
 wrote new config and then failed during compose restart used to leave
