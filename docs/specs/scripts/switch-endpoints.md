@@ -159,6 +159,20 @@ Recovery rule (in `_post_rollback_lifecycle_recovery`):
    additional "manual intervention required" error is appended so
    the operator sees it on `--list-snapshots`.
 
+> **Note: why `restart` and not `start` for the "was running" branch.**
+> The forward-path action recorded in `lifecycle_attempted` could be any
+> of `start` / `stop` / `restart`, and at recovery time the target may
+> currently be either up or down depending on how far the forward path
+> got before the cancel / failure. `restart` is the only command that
+> reliably converges to "service is up AND has just re-read the
+> restored conf" regardless of current state — `start` is a no-op
+> when the service is already running, which would leave it serving
+> the new (now-discarded) config. The same holds in reverse for
+> `stop`: it is the only command that reliably leaves the service
+> down regardless of current state. Using these two as the canonical
+> recovery actions lets us treat every entry in `lifecycle_attempted`
+> uniformly and keeps the recovery code one short branch.
+
 Out of scope (deliberately not undone): ollama model unloads
 (re-load is lazy and cheap on next request), LLM tokens consumed,
 running Hermes process memory.
